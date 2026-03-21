@@ -1,0 +1,30 @@
+{% extends 'base.html' %}
+{% block title %}Edit Review – RB{% endblock %}
+{% block content %}
+<style>
+  @media (max-width: 576px) {
+    .container[style*="max-width:800px"] { 
+      max-width: 100% !important; 
+      padding: 0 var(--space-md); 
+    }
+    h3 { font-size: 1.2rem; }
+    .form-control { font-size: 16px; }
+  }
+</style>
+<div class="container" style="max-width:800px; margin-top:2rem;">
+  <h3>Edit Review</h3>
+  <form method="post" action="{{ url_for('reviews.edit_review', review_id=review.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="mb-3">
+      <label class="form-label">Review Text</label>
+      <textarea name="body" class="form-control" rows="4" required>{{ review.body }}</textarea>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Highlight / Note (optional)</label>
+      <input type="text" name="highlight_text" class="form-control" value="{{ review.highlight_text or '' }}">
+    </div>
+    <button type="submit" class="btn btn-primary">Save Changes</button>
+    <a href="{{ url_for('tickets.detail', ticket_id=review.ticket_id) }}" class="btn btn-secondary ms-2">Cancel</a>
+  </form>
+</div>
+{% endblock %}

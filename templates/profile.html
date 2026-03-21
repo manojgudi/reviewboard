@@ -1,0 +1,107 @@
+{% extends 'base.html' %}
+{% block title %}Profile – RB{% endblock %}
+{% block content %}
+<style>
+  @media (max-width: 576px) {
+    .container[style*="max-width: 700px"] { 
+      max-width: 100% !important; 
+      padding: var(--space-md) !important; 
+    }
+    .col-md-4, .col-md-8 { width: 100% !important; }
+  }
+</style>
+<div class="container" style="max-width: 700px; padding: var(--space-lg);">
+  <h2 class="mb-4">My Profile</h2>
+  
+  <div class="card p-4 mb-4">
+    <h5 class="mb-3">Account Information</h5>
+    <div class="row mb-2">
+      <div class="col-md-4 text-muted" style="font-size: 12px; text-transform: uppercase;">Username</div>
+      <div class="col-md-8">{{ current_user.username }}</div>
+    </div>
+    <div class="row mb-2">
+      <div class="col-md-4 text-muted" style="font-size: 12px; text-transform: uppercase;">Email</div>
+      <div class="col-md-8">{{ current_user.email }}</div>
+    </div>
+    <div class="row mb-2">
+      <div class="col-md-4 text-muted" style="font-size: 12px; text-transform: uppercase;">Full Name</div>
+      <div class="col-md-8">{{ current_user.full_name or '—' }}</div>
+    </div>
+    <div class="row">
+      <div class="col-md-4 text-muted" style="font-size: 12px; text-transform: uppercase;">Role</div>
+      <div class="col-md-8">{{ current_user.role|capitalize }}</div>
+    </div>
+  </div>
+
+  <!-- Password Change -->
+  <div class="card p-4 mb-4">
+    <h5 class="mb-3">Change Password</h5>
+    <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="mb-3">
+        <label class="form-label" for="current_password">Current Password</label>
+        <input type="password" class="form-control" id="current_password" name="current_password" required>
+      </div>
+      <div class="mb-3">
+        <label class="form-label" for="new_password">New Password</label>
+        <input type="password" class="form-control" id="new_password" name="new_password" required minlength="6">
+      </div>
+      <div class="mb-3">
+        <label class="form-label" for="confirm_password">Confirm New Password</label>
+        <input type="password" class="form-control" id="confirm_password" name="confirm_password" required>
+      </div>
+      <button type="submit" class="btn btn-primary">Change Password</button>
+    </form>
+  </div>
+
+  <!-- Preferences -->
+  <div class="card p-4">
+    <h5 class="mb-3">Preferences</h5>
+    <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="mb-3">
+        <label class="form-label" for="icon_color">Profile Icon Color</label>
+        <div class="d-flex align-items-center gap-2">
+          <input type="color" class="form-control form-control-color" 
+                 id="icon_color_preview" value="{{ prefs_form.icon_color.data }}" 
+                 style="width: 50px; height: 38px; padding: 2px;">
+          <input type="text" class="form-control" id="icon_color" name="icon_color" 
+                 value="{{ prefs_form.icon_color.data }}" 
+                 pattern="^#[0-9A-Fa-f]{6}$" placeholder="#0052CC" style="max-width: 120px;">
+        </div>
+        <small class="text-muted">Hex color code (e.g., #0052CC)</small>
+      </div>
+      <div class="mb-3">
+        <label class="form-label" for="default_review_color">Default Review Color</label>
+        <select class="form-select" id="default_review_color" name="default_review_color">
+          <option value="yellow" {% if prefs_form.default_review_color.data == 'yellow' %}selected{% endif %}>Yellow</option>
+          <option value="green" {% if prefs_form.default_review_color.data == 'green' %}selected{% endif %}>Green</option>
+          <option value="blue" {% if prefs_form.default_review_color.data == 'blue' %}selected{% endif %}>Blue</option>
+          <option value="pink" {% if prefs_form.default_review_color.data == 'pink' %}selected{% endif %}>Pink</option>
+          <option value="orange" {% if prefs_form.default_review_color.data == 'orange' %}selected{% endif %}>Orange</option>
+        </select>
+        <small class="text-muted">Default highlight color for your reviews</small>
+      </div>
+      <button type="submit" class="btn btn-primary">Save Preferences</button>
+    </form>
+  </div>
+</div>
+
+<script>
+// Sync color picker and text input
+(function() {
+  var preview = document.getElementById('icon_color_preview');
+  var text = document.getElementById('icon_color');
+  
+  preview.addEventListener('input', function() {
+    text.value = preview.value.toUpperCase();
+  });
+  
+  text.addEventListener('input', function() {
+    if (/^#[0-9A-Fa-f]{6}$/.test(text.value)) {
+      preview.value = text.value;
+    }
+  });
+})();
+</script>
+{% endblock %}

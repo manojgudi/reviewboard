@@ -1,0 +1,143 @@
+{% extends 'base.html' %}
+{% block title %}Board – RB{% endblock %}
+{% block content %}
+<style>
+  .deadline-urgent {
+    color: #dc3545 !important;
+    font-weight: 700;
+  }
+  .deadline-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    margin-top: 4px;
+  }
+  .deadline-normal {
+    background: #e9ecef;
+    color: #6c757d;
+  }
+  .deadline-urgent-badge {
+    background: #dc3545;
+    color: white;
+  }
+  .column-cards {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    max-height: calc(100vh - 250px);
+    overflow-y: auto;
+  }
+  @media (max-width: 768px) {
+    .column-cards {
+      max-height: none;
+      overflow-y: visible;
+    }
+    .card-title { font-size: 0.9rem !important; }
+  }
+</style>
+
+<h2 class="mb-4">Board</h2>
+
+<!-- All Columns: Open | In Review | Closed in one row -->
+<div class="kanban">
+  <!-- Open Column -->
+  {% set open_tickets = columns.get('open', []) %}
+  <section class="open-col">
+    <div class="column-header">
+      <h5 class="text-uppercase" style="font-size:0.9rem; color:var(--color-text-muted); margin:0;">📝 Open</h5>
+      <span class="status-badge status-open">{{ open_tickets|length }}</span>
+    </div>
+    <div class="column-cards">
+      {% for ticket in open_tickets %}
+      <div class="card ticket-card" style="border-left:4px solid var(--color-success); cursor:pointer;" onclick="location.href='{{ url_for('tickets.detail', ticket_id=ticket.id) }}'">
+        <div class="card-body p-3">
+          <h6 class="card-title mb-1 {% if ticket.is_urgent %}deadline-urgent{% endif %}" style="font-weight:600; color:var(--color-text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ ticket.title }}</h6>
+          <p class="mb-1" style="font-size:0.75rem; color:var(--color-text-muted);">by {{ ticket.owner.full_name or ticket.owner.username }}</p>
+          <small class="text-muted">
+            {{ ticket.created_at | cet_time | strftime('%d/%m/%Y') }}
+            <span class="ms-2">💬 {{ ticket.reviews.count() }}</span>
+          </small>
+          {% if ticket.deadline %}
+          <div class="deadline-badge {% if ticket.is_urgent %}deadline-urgent-badge{% else %}deadline-normal{% endif %}">
+            📅 {{ ticket.deadline | cet_time | strftime('%d/%m/%Y') }}
+          </div>
+          {% endif %}
+        </div>
+      </div>
+      {% else %}
+      <p class="text-muted">No open tickets</p>
+      {% endfor %}
+    </div>
+  </section>
+
+  <!-- In Review Column -->
+  {% set in_review_tickets = columns.get('in_review', []) %}
+  <section class="in-review-col">
+    <div class="column-header">
+      <h5 class="text-uppercase" style="font-size:0.9rem; color:var(--color-text-muted); margin:0;">🔍 In Review</h5>
+      <span class="status-badge status-in_review">{{ in_review_tickets|length }}</span>
+    </div>
+    <div class="column-cards">
+      {% for ticket in in_review_tickets %}
+      <div class="card ticket-card" style="border-left:4px solid var(--color-warning); cursor:pointer;" onclick="location.href='{{ url_for('tickets.detail', ticket_id=ticket.id) }}'">
+        <div class="card-body p-3">
+          <h6 class="card-title mb-1 {% if ticket.is_urgent %}deadline-urgent{% endif %}" style="font-weight:600; color:var(--color-text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ ticket.title }}</h6>
+          <p class="mb-1" style="font-size:0.75rem; color:var(--color-text-muted);">by {{ ticket.owner.full_name or ticket.owner.username }}</p>
+          <small class="text-muted">
+            {{ ticket.created_at | cet_time | strftime('%d/%m/%Y') }}
+            <span class="ms-2">💬 {{ ticket.reviews.count() }}</span>
+          </small>
+          {% if ticket.deadline %}
+          <div class="deadline-badge {% if ticket.is_urgent %}deadline-urgent-badge{% else %}deadline-normal{% endif %}">
+            📅 {{ ticket.deadline | cet_time | strftime('%d/%m/%Y') }}
+          </div>
+          {% endif %}
+        </div>
+      </div>
+      {% else %}
+      <p class="text-muted">No tickets in review</p>
+      {% endfor %}
+    </div>
+  </section>
+
+  <!-- Closed Column -->
+  {% set closed_tickets = columns.get('closed', []) %}
+  <section class="closed-col closed-section">
+    <div class="column-header">
+      <h5 class="text-uppercase" style="font-size:0.9rem; color:#6c757d; margin:0;">🔒 Closed</h5>
+      <span class="status-badge status-closed">{{ closed_tickets|length }}</span>
+    </div>
+    {% if current_user.is_admin and closed_tickets|length > 0 %}
+    <div class="mb-2">
+      <form method="post" action="{{ url_for('tickets.auto_close_expired') }}" style="display:inline;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-sm btn-outline-warning w-100" onclick="return confirm('Close all tickets with expired deadlines?')">🔄 Auto-Close Expired</button>
+      </form>
+    </div>
+    {% endif %}
+    <div class="column-cards">
+      {% for ticket in closed_tickets %}
+      <div class="card closed-ticket" style="border-left:4px solid #6c757d; cursor:pointer;" onclick="location.href='{{ url_for('tickets.detail', ticket_id=ticket.id) }}'">
+        <div class="card-body p-3">
+          <h6 class="card-title mb-1" style="font-weight:600; color:var(--color-text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ ticket.title }}</h6>
+          <p class="mb-1" style="font-size:0.75rem; color:var(--color-text-muted);">by {{ ticket.owner.full_name or ticket.owner.username }}</p>
+          <small class="text-muted">
+            Closed: {{ ticket.closed_at | cet_time | strftime('%d/%m/%Y') if ticket.closed_at else 'Unknown' }}
+            <span class="ms-2">💬 {{ ticket.reviews.count() }}</span>
+          </small>
+          {% if ticket.deadline %}
+          <div class="deadline-badge deadline-normal">
+            📅 Deadline was: {{ ticket.deadline | cet_time | strftime('%d/%m/%Y') }}
+          </div>
+          {% endif %}
+        </div>
+      </div>
+      {% else %}
+      <p class="text-muted">No closed tickets</p>
+      {% endfor %}
+    </div>
+  </section>
+</div>
+{% endblock %}

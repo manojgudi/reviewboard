@@ -1,0 +1,20 @@
+# Core Flask framework
+Flask>=3.0,<4.0
+Flask-Login>=0.6,<1.0
+Flask-SQLAlchemy>=3.1,<4.0
+Flask-WTF>=1.2,<2.0
+Flask-Bcrypt>=1.0,<2.0
+
+# Form validation
+WTForms>=3.1,<4.0
+email-validator>=2.0,<3.0
+
+# Markdown and HTML sanitization
+markdown2>=2.4,<3.0
+bleach>=6.0,<7.0
+
+# Image processing (optional, for future features)
+Pillow>=10.0,<11.0
+
+# Production server
+gunicorn>=21.0,<23.0

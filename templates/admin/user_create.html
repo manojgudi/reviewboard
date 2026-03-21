@@ -1,0 +1,43 @@
+{% extends 'base.html' %}
+{% block title %}Create User – RB{% endblock %}
+{% block content %}
+<style>
+  @media (max-width: 576px) {
+    form { padding: 0 !important; }
+    h2 { font-size: 1.3rem; }
+    .form-control { font-size: 16px; }
+  }
+</style>
+<h2 class="mb-4">Create New User</h2>
+<form method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="mb-3">
+    <label class="form-label" for="username">Username</label>
+    <input type="text" class="form-control" id="username" name="username" value="{{ form.username.data or '' }}" required minlength="3" maxlength="80">
+    {% for error in form.username.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}
+  </div>
+  <div class="mb-3">
+    <label class="form-label" for="email">Email</label>
+    <input type="email" class="form-control" id="email" name="email" value="{{ form.email.data or '' }}" required>
+    {% for error in form.email.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}
+  </div>
+  <div class="mb-3">
+    <label class="form-label" for="full_name">Full Name</label>
+    <input type="text" class="form-control" id="full_name" name="full_name" value="{{ form.full_name.data or '' }}" maxlength="200">
+  </div>
+  <div class="mb-3">
+    <label class="form-label" for="password">Password</label>
+    <input type="password" class="form-control" id="password" name="password" required minlength="6">
+    {% for error in form.password.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}
+  </div>
+  <div class="mb-3">
+    <label class="form-label" for="role">Role</label>
+    <select class="form-select" id="role" name="role">
+      <option value="reviewer" {% if form.role.data == 'reviewer' %}selected{% endif %}>Reviewer</option>
+      <option value="admin" {% if form.role.data == 'admin' %}selected{% endif %}>Admin</option>
+    </select>
+  </div>
+  <button type="submit" class="btn btn-primary">Create User</button>
+  <a href="{{ url_for('admin.users') }}" class="btn btn-secondary ms-2">Cancel</a>
+</form>
+{% endblock %}

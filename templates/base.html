@@ -1,0 +1,882 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Favicon -->
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+
+  <title>{% block title %}ReviewBoard{% endblock %}</title>
+
+  <!-- Theme flash prevention: apply stored theme BEFORE first paint -->
+  <script>
+    (function(){
+      var t = localStorage.getItem('theme');
+      if(t === 'dark') document.documentElement.classList.add('theme-dark');
+    })();
+  </script>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <!-- Bootstrap 5 -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+
+  <style>
+    /* ── Design Tokens ─────────────────────────────────────── */
+    :root {
+      --color-bg:           #F4F5F7;
+      --color-surface:      #FFFFFF;
+      --color-border:       #DFE1E6;
+      --color-text-primary: #172B4D;
+      --color-text-muted:   #6B778C;
+      --color-accent:       #0052CC;
+      --color-accent-hover: #79B8F3;
+      --color-danger:       #FF6B6B;
+      --color-success:      #4CC38A;
+      --color-warning:      #FFC453;
+      --color-neutral:      #A8B3CF;
+      --shadow-card:        0 1px 3px rgba(0,0,0,0.4);
+
+      --font-sans:  'Inter', system-ui, sans-serif;
+      --font-mono:  'JetBrains Mono', monospace;
+      --font-size-base: 14px;
+      --line-height-base: 1.5;
+
+      --space-xs: 4px;
+      --space-sm: 8px;
+      --space-md: 16px;
+      --space-lg: 24px;
+      --space-xl: 32px;
+
+      --radius-sm:  3px;
+      --radius-md:  6px;
+      --border-card: 1px solid var(--color-border);
+
+      --navbar-height: 52px;
+    }
+
+    /* ── Dark Theme ────────────────────────────────────────── */
+    .theme-dark {
+      --color-bg:           #0d1117;
+      --color-surface:      #161b22;
+      --color-border:       #30363d;
+      --color-text-primary: #c9d1d9;
+      --color-text-muted:   #8b949e;
+      --color-accent:       #58a6ff;
+      --color-accent-hover: #79B8F3;
+      --shadow-card:        0 1px 3px rgba(0,0,0,0.6);
+    }
+
+    /* ── Base ──────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body {
+      height: 100%;
+      margin: 0;
+    }
+    body {
+      background-color: var(--color-bg);
+      color: var(--color-text-primary);
+      font-family: var(--font-sans);
+      font-size: var(--font-size-base);
+      line-height: var(--line-height-base);
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+
+    /* ── Top Nav ───────────────────────────────────────────── */
+    .rb-nav {
+      background: var(--color-surface);
+      border-bottom: 1px solid var(--color-border);
+      height: var(--navbar-height);
+      display: flex;
+      align-items: center;
+      padding: 0 var(--space-lg);
+      gap: var(--space-md);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .rb-nav .logo {
+      font-weight: 700;
+      font-size: 16px;
+      color: var(--color-accent);
+      text-decoration: none;
+      margin-right: var(--space-md);
+      flex-shrink: 0;
+    }
+    .rb-nav .logo:hover { color: var(--color-accent-hover); }
+    .rb-nav .nav-links {
+      display: flex;
+      gap: var(--space-xs);
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+    .rb-nav .nav-links a {
+      color: var(--color-text-primary);
+      text-decoration: none;
+      padding: 4px 8px;
+      border-radius: var(--radius-sm);
+      font-size: 14px;
+      position: relative;
+    }
+    .rb-nav .nav-links a:hover { text-decoration: underline; }
+    .rb-nav .spacer { flex: 1; }
+    .rb-nav .user-chip {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      position: relative;
+    }
+    .rb-nav .avatar {
+      width: 28px; height: 28px;
+      background: var(--color-accent);
+      color: #fff;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 600;
+      font-size: 11px;
+      flex-shrink: 0;
+    }
+    .rb-nav .user-name {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--color-text-primary);
+    }
+    .rb-nav .user-dropdown {
+      display: none;
+      position: absolute;
+      top: calc(100% + 8px);
+      right: 0;
+      background: var(--color-surface);
+      border: var(--border-card);
+      border-radius: var(--radius-md);
+      box-shadow: var(--shadow-card);
+      min-width: 140px;
+      z-index: 200;
+      overflow: hidden;
+    }
+    .rb-nav .user-dropdown a {
+      display: block;
+      padding: 8px 14px;
+      font-size: 13px;
+      color: var(--color-text-primary);
+      text-decoration: none;
+    }
+    .rb-nav .user-dropdown a:hover { background: var(--color-bg); }
+    .rb-nav .user-chip.open .user-dropdown { display: block; }
+    .rb-nav .theme-toggle {
+      background: transparent;
+      border: none;
+      font-size: 1.1rem;
+      cursor: pointer;
+      color: var(--color-text-primary);
+      padding: 4px;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+
+    /* ── Cards ─────────────────────────────────────────────── */
+    .card {
+      background: var(--color-surface);
+      border: var(--border-card);
+      border-radius: var(--radius-md);
+      box-shadow: var(--shadow-card);
+    }
+
+    /* ── Buttons ───────────────────────────────────────────── */
+    .btn-primary {
+      background-color: var(--color-accent) !important;
+      border-color: var(--color-accent) !important;
+      color: #fff !important;
+      border-radius: var(--radius-sm) !important;
+      padding: 6px 14px !important;
+      font-weight: 500 !important;
+      box-shadow: none !important;
+    }
+    .btn-primary:hover {
+      background-color: var(--color-accent-hover) !important;
+      border-color: var(--color-accent-hover) !important;
+    }
+    .btn-danger {
+      background: transparent !important;
+      border: 1px solid var(--color-danger) !important;
+      color: var(--color-danger) !important;
+      border-radius: var(--radius-sm) !important;
+      padding: 6px 14px !important;
+      font-weight: 500 !important;
+      box-shadow: none !important;
+    }
+    .btn-danger:hover {
+      background: var(--color-danger) !important;
+      color: #fff !important;
+    }
+    .btn-secondary {
+      background: transparent !important;
+      border: 1px solid var(--color-border) !important;
+      color: var(--color-text-primary) !important;
+      border-radius: var(--radius-sm) !important;
+      padding: 6px 14px !important;
+      font-weight: 500 !important;
+      box-shadow: none !important;
+    }
+
+    /* ── Forms ─────────────────────────────────────────────── */
+    .form-control, .form-select {
+      border: 1px solid var(--color-border) !important;
+      border-radius: var(--radius-sm) !important;
+      background: var(--color-surface) !important;
+      color: var(--color-text-primary) !important;
+    }
+    .form-control:focus, .form-select:focus {
+      border-color: var(--color-accent) !important;
+      box-shadow: 0 0 0 2px rgba(0,82,204,0.2) !important;
+      outline: none !important;
+    }
+    .form-label {
+      color: var(--color-text-muted);
+      font-weight: 500;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    /* ── Status Badges ─────────────────────────────────────── */
+    .status-badge {
+      font-size: 0.75rem;
+      padding: var(--space-xs) var(--space-sm);
+      border-radius: var(--radius-sm);
+      font-weight: 500;
+    }
+    .status-open     { background: var(--color-success); color: #fff; }
+    .status-in_review { background: var(--color-warning); color: #fff; }
+    .status-closed   { background: var(--color-danger); color: #fff; }
+
+    /* ── Flash Messages ────────────────────────────────────── */
+    .flash-zone {
+      max-width: 900px;
+      margin: var(--space-md) auto 0;
+      padding: 0 var(--space-md);
+    }
+
+    /* ── Main Content ──────────────────────────────────────── */
+    .rb-main {
+      flex: 1;
+      padding: 0 24px;
+    }
+
+    /* ── Footer ────────────────────────────────────────────── */
+    .rb-footer {
+      background: var(--color-surface);
+      border-top: 1px solid var(--color-border);
+      text-align: center;
+      padding: var(--space-sm) var(--space-md);
+      color: var(--color-text-muted);
+      font-size: 12px;
+    }
+    /* ── Ticket Card Hover ─────────────────────────────────── */
+    .ticket-card:hover { background: var(--color-bg) !important; }
+
+    /* ── Bootstrap Dark Mode Overrides ────────────────────── */
+    /* Make ALL text content inherit CSS variable */
+    .theme-dark body,
+    .theme-dark .container,
+    .theme-dark .row,
+    .theme-dark [class*="col-"],
+    .theme-dark .card-body,
+    .theme-dark .card > * {
+      color: var(--color-text-primary);
+    }
+
+    /* Fix alert text colors in dark mode */
+    .theme-dark .alert-success {
+      background-color: rgba(76, 195, 138, 0.15) !important;
+      border-color: var(--color-success) !important;
+      color: var(--color-text-primary) !important;
+    }
+    .theme-dark .alert-danger {
+      background-color: rgba(255, 107, 107, 0.15) !important;
+      border-color: var(--color-danger) !important;
+      color: var(--color-text-primary) !important;
+    }
+    .theme-dark .alert-warning {
+      background-color: rgba(255, 196, 83, 0.15) !important;
+      border-color: var(--color-warning) !important;
+      color: var(--color-text-primary) !important;
+    }
+    .theme-dark .alert-info {
+      background-color: rgba(88, 166, 255, 0.15) !important;
+      border-color: var(--color-accent) !important;
+      color: var(--color-text-primary) !important;
+    }
+    .theme-dark .alert-primary {
+      background-color: rgba(88, 166, 255, 0.15) !important;
+      border-color: var(--color-accent) !important;
+      color: var(--color-text-primary) !important;
+    }
+    /* Fix alert close button in dark mode */
+    .theme-dark .btn-close {
+      filter: invert(1) grayscale(100%) brightness(200%);
+    }
+
+    /* Fix form text in dark mode */
+    .theme-dark input::placeholder,
+    .theme-dark textarea::placeholder {
+      color: var(--color-text-muted) !important;
+      opacity: 0.7;
+    }
+
+    /* Fix table colors in dark mode if tables exist */
+    .theme-dark table {
+      color: var(--color-text-primary);
+    }
+    .theme-dark th, .theme-dark td {
+      border-color: var(--color-border) !important;
+    }
+    .theme-dark thead th {
+      background-color: var(--color-bg);
+      color: var(--color-text-primary);
+    }
+    .theme-dark tbody tr:hover {
+      background-color: var(--color-bg) !important;
+    }
+
+    /* Fix nav link colors in dark mode */
+    .theme-dark .nav-links a {
+      color: var(--color-text-primary);
+    }
+    .theme-dark .nav-links a:hover {
+      background-color: var(--color-bg);
+    }
+
+    /* Fix dropdown menus in dark mode */
+    .theme-dark .dropdown-menu {
+      background-color: var(--color-surface);
+      border-color: var(--color-border);
+      color: var(--color-text-primary);
+    }
+    .theme-dark .dropdown-item {
+      color: var(--color-text-primary);
+    }
+    .theme-dark .dropdown-item:hover {
+      background-color: var(--color-bg);
+      color: var(--color-text-primary);
+    }
+
+    /* Fix modal backdrop and content in dark mode */
+    .theme-dark .modal-content {
+      background-color: var(--color-surface);
+      border-color: var(--color-border);
+      color: var(--color-text-primary);
+    }
+    .theme-dark .modal-header {
+      border-color: var(--color-border);
+    }
+    .theme-dark .modal-footer {
+      border-color: var(--color-border);
+    }
+
+    /* Fix miscellaneous Bootstrap text utilities */
+    .theme-dark .text-muted {
+      color: var(--color-text-muted) !important;
+    }
+    .theme-dark .text-primary {
+      color: var(--color-accent) !important;
+    }
+    .theme-dark .text-danger {
+      color: var(--color-danger) !important;
+    }
+    .theme-dark .text-success {
+      color: var(--color-success) !important;
+    }
+
+    /* Fix btn-outline-* variants in dark mode */
+    .theme-dark .btn-outline-primary {
+      color: var(--color-accent);
+      border-color: var(--color-accent);
+    }
+    .theme-dark .btn-outline-primary:hover {
+      background-color: var(--color-accent);
+      color: #fff;
+    }
+    .theme-dark .btn-outline-danger {
+      color: var(--color-danger);
+      border-color: var(--color-danger);
+    }
+    .theme-dark .btn-outline-danger:hover {
+      background-color: var(--color-danger);
+      color: #fff;
+    }
+
+    /* Fix bg-light/bg-dark in dark mode */
+    .theme-dark .bg-light {
+      background-color: var(--color-bg) !important;
+    }
+    .theme-dark .bg-dark {
+      background-color: var(--color-surface) !important;
+    }
+    .theme-dark .bg-white {
+      background-color: var(--color-surface) !important;
+    }
+
+    /* Fix borders for Bootstrap table class */
+    .theme-dark .table > :not(caption) > * > * {
+      background-color: var(--color-surface);
+      box-shadow: inset 0 0 0 9999px var(--color-surface);
+    }
+
+    /* Fix hr element in dark mode */
+    .theme-dark hr {
+      border-color: var(--color-border);
+      opacity: 0.5;
+    }
+
+    /* Fix card body text */
+    .theme-dark .card-body {
+      color: var(--color-text-primary);
+    }
+
+    /* Fix heading colors in cards */
+    .theme-dark .card h1,
+    .theme-dark .card h2,
+    .theme-dark .card h3,
+    .theme-dark .card h4,
+    .theme-dark .card h5,
+    .theme-dark .card h6 {
+      color: var(--color-text-primary);
+    }
+
+    /* Fix page heading */
+    .theme-dark h1,
+    .theme-dark h2,
+    .theme-dark h3,
+    .theme-dark h4,
+    .theme-dark h5,
+    .theme-dark h6 {
+      color: var(--color-text-primary);
+    }
+
+    /* Fix p tag inside cards */
+    .theme-dark .card p,
+    .theme-dark .card-body p {
+      color: var(--color-text-primary);
+    }
+
+    /* Fix a tag colors in dark mode */
+    .theme-dark a:not(.btn):not(.nav-link) {
+      color: var(--color-accent);
+    }
+    .theme-dark a:not(.btn):not(.nav-link):hover {
+      color: var(--color-accent-hover);
+    }
+
+    /* Fix badge text */
+    .theme-dark .badge {
+      color: #fff;
+    }
+
+    /* Fix list group in dark mode if used */
+    .theme-dark .list-group-item {
+      background-color: var(--color-surface);
+      border-color: var(--color-border);
+      color: var(--color-text-primary);
+    }
+
+    /* Fix input-group text */
+    .theme-dark .input-group-text {
+      background-color: var(--color-bg);
+      border-color: var(--color-border);
+      color: var(--color-text-primary);
+    }
+
+    /* Fix small text */
+    .theme-dark small {
+      color: var(--color-text-muted);
+    }
+
+    /* Fix Bootstrap grid columns in dark mode */
+    .theme-dark .col,
+    .theme-dark .col-1,
+    .theme-dark .col-2,
+    .theme-dark .col-3,
+    .theme-dark .col-4,
+    .theme-dark .col-5,
+    .theme-dark .col-6,
+    .theme-dark .col-7,
+    .theme-dark .col-8,
+    .theme-dark .col-9,
+    .theme-dark .col-10,
+    .theme-dark .col-11,
+    .theme-dark .col-12,
+    .theme-dark .col-md,
+    .theme-dark .col-md-1,
+    .theme-dark .col-md-2,
+    .theme-dark .col-md-3,
+    .theme-dark .col-md-4,
+    .theme-dark .col-md-5,
+    .theme-dark .col-md-6,
+    .theme-dark .col-md-7,
+    .theme-dark .col-md-8,
+    .theme-dark .col-md-9,
+    .theme-dark .col-md-10,
+    .theme-dark .col-md-11,
+    .theme-dark .col-md-12,
+    .theme-dark .col-lg,
+    .theme-dark .col-lg-1,
+    .theme-dark .col-lg-2,
+    .theme-dark .col-lg-3,
+    .theme-dark .col-lg-4,
+    .theme-dark .col-lg-5,
+    .theme-dark .col-lg-6,
+    .theme-dark .col-lg-7,
+    .theme-dark .col-lg-8,
+    .theme-dark .col-lg-9,
+    .theme-dark .col-lg-10,
+    .theme-dark .col-lg-11,
+    .theme-dark .col-lg-12 {
+      color: var(--color-text-primary);
+    }
+
+    /* ── Responsive: stack kanban on small screens ─────────── */
+    @media (max-width: 900px) {
+      .kanban { grid-template-columns: 1fr !important; }
+      .ticket-detail { grid-template-columns: 1fr !important; }
+    }
+    
+    /* ── Kanban Columns: Fixed widths, responsive ─────────── */
+    .kanban {
+      display: flex !important;
+      flex-wrap: nowrap;
+      gap: var(--space-lg);
+      padding: var(--space-lg);
+    }
+    .kanban section {
+      flex: 1;
+      min-width: 0;
+      background: var(--color-surface);
+      border: var(--border-card);
+      border-radius: var(--radius-md);
+      padding: var(--space-md);
+    }
+    .kanban section.closed-section {
+      background: #f8f9fa;
+      border: 1px dashed #dee2e6;
+      flex: 1;
+    }
+    .kanban .column-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: var(--space-md);
+      padding-bottom: var(--space-sm);
+      border-bottom: 2px solid var(--color-border);
+    }
+    .kanban section.open-col { border-top: 3px solid var(--color-success); }
+    .kanban section.in-review-col { border-top: 3px solid var(--color-warning); }
+    .kanban section.closed-col { border-top: 3px solid var(--color-neutral); }
+    
+    @media (max-width: 768px) {
+      .kanban {
+        flex-direction: column;
+        flex-wrap: wrap;
+        padding: var(--space-sm);
+        gap: var(--space-md);
+      }
+      .kanban section,
+      .kanban section.closed-section {
+        width: 100% !important;
+        flex: none;
+      }
+      .kanban section header h5 { font-size: 0.8rem; }
+    }
+
+    /* ── Mobile-Friendly Enhancements ─────────────────────── */
+    @media (max-width: 768px) {
+      .rb-nav { padding: 0 var(--space-md); gap: var(--space-sm); }
+      .rb-nav .logo { font-size: 14px; margin-right: var(--space-sm); }
+      .rb-nav .user-name { display: none; }
+      .rb-nav .nav-links { gap: 0; }
+      .rb-nav .nav-links a { padding: 6px 8px; font-size: 13px; }
+      
+      .kanban { padding: var(--space-sm); gap: var(--space-sm); }
+      .ticket-detail { padding: var(--space-sm) !important; }
+      .pdf-pane, .review-pane { padding: var(--space-sm); }
+      .review-pane { 
+        position: static !important; 
+        max-height: none !important; 
+        overflow-y: visible !important;
+      }
+      
+      .card { margin-bottom: var(--space-sm); }
+      .card-body { padding: var(--space-sm) !important; }
+      
+      .btn { width: 100%; margin-bottom: var(--space-xs); }
+      .btn:last-child { margin-bottom: 0; }
+      .d-flex.gap-2 .btn { width: auto; margin-bottom: 0; }
+      
+      .form-control, .form-select { font-size: 16px; }
+      .form-label { font-size: 11px; }
+      
+      h1, h2, h3, h4 { font-size: 1.2rem; }
+      
+      .status-badge { font-size: 0.7rem; }
+      
+      .rb-footer { font-size: 10px; }
+      
+      .flash-zone { padding: 0 var(--space-sm); }
+    }
+
+    /* ── Markdown Rendered Content ────────────────────────── */
+    .review-body {
+      font-size: 13px;
+      line-height: 1.6;
+      color: var(--color-text-primary);
+    }
+    .review-body h1, .review-body h2, .review-body h3,
+    .review-body h4, .review-body h5, .review-body h6 {
+      margin-top: 12px;
+      margin-bottom: 8px;
+      font-weight: 600;
+    }
+    .review-body h1 { font-size: 1.2em; }
+    .review-body h2 { font-size: 1.1em; }
+    .review-body h3 { font-size: 1em; }
+    .review-body p { margin-bottom: 8px; }
+    .review-body ul, .review-body ol {
+      padding-left: 20px;
+      margin-bottom: 8px;
+    }
+    .review-body li { margin-bottom: 4px; }
+    .review-body code {
+      background: var(--color-bg);
+      padding: 2px 5px;
+      border-radius: 3px;
+      font-size: 12px;
+      font-family: var(--font-mono);
+    }
+    .review-body pre {
+      background: var(--color-bg);
+      padding: 10px;
+      border-radius: 4px;
+      overflow-x: auto;
+      margin-bottom: 8px;
+    }
+    .review-body pre code {
+      background: none;
+      padding: 0;
+    }
+    .review-body blockquote {
+      border-left: 3px solid var(--color-border);
+      padding-left: 10px;
+      margin-left: 0;
+      color: var(--color-text-muted);
+    }
+    .review-body a { color: var(--color-accent); }
+    .review-body table {
+      border-collapse: collapse;
+      width: 100%;
+      margin-bottom: 8px;
+    }
+    .review-body th, .review-body td {
+      border: 1px solid var(--color-border);
+      padding: 6px 8px;
+      text-align: left;
+    }
+    .review-body th { background: var(--color-bg); }
+    .review-body img { max-width: 100%; height: auto; }
+    .review-body hr { border: none; border-top: 1px solid var(--color-border); margin: 12px 0; }
+
+    /* ── Ticket detail page content padding ─────────────────── */
+    .ticket-detail { padding: var(--space-lg); }
+    .pdf-pane { padding: var(--space-md); }
+    .review-pane { position: sticky; top: var(--navbar-height); max-height: calc(100vh - var(--navbar-height)); overflow-y: auto; }
+
+    /* ── Dashboard padding ───────────────────────────────────── */
+    .kanban { padding: var(--space-lg); }
+
+    /* ── Help Panel ─────────────────────────────────────────── */
+    .help-panel {
+      display: none;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      padding: var(--space-md);
+      margin-top: var(--space-md);
+      max-width: 700px;
+      margin-left: auto;
+      margin-right: auto;
+      box-shadow: var(--shadow-card);
+      text-align: left;
+    }
+    .help-panel h4 {
+      margin: 0 0 var(--space-md);
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--color-accent);
+    }
+    .help-panel h5 {
+      margin: var(--space-md) 0 var(--space-sm);
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .help-panel ol {
+      margin: 0;
+      padding-left: 20px;
+    }
+    .help-panel li {
+      margin-bottom: var(--space-sm);
+      color: var(--color-text-primary);
+    }
+    .help-panel .step {
+      font-weight: 500;
+    }
+    .help-toggle {
+      background: transparent;
+      border: none;
+      color: var(--color-accent);
+      cursor: pointer;
+      font-size: 12px;
+      text-decoration: underline;
+      padding: 0;
+    }
+    .help-toggle:hover {
+      color: var(--color-accent-hover);
+    }
+  </style>
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+
+  <!-- ── Top Navigation ──────────────────────────────────────── -->
+  <nav class="rb-nav">
+    <a class="logo" href="{{ url_for('tickets.board') }}">🔬 RB</a>
+
+    {% if current_user.is_authenticated %}
+    <ul class="nav-links">
+      <li><a href="{{ url_for('tickets.board') }}">Dashboard</a></li>
+      <li><a href="{{ url_for('tickets.new_ticket') }}">New Ticket</a></li>
+      {% if current_user.is_admin %}
+      <li><a href="{{ url_for('admin.users') }}">Admin</a></li>
+      {% endif %}
+    </ul>
+    {% endif %}
+
+    <div class="spacer"></div>
+
+    {% if current_user.is_authenticated %}
+    <div class="user-chip" id="userChip">
+      <div class="avatar" style="background-color: {{ current_user.icon_color|safe_color }}">
+        {{ (current_user.full_name or current_user.username)[:2]|upper }}
+      </div>
+      <span class="user-name">{{ current_user.full_name or current_user.username }}</span>
+      <span style="font-size:10px; margin-left:2px; color:var(--color-text-muted)">▾</span>
+      <div class="user-dropdown" id="userDropdown">
+        <a href="{{ url_for('auth.profile') }}">My Profile</a>
+        <a href="{{ url_for('auth.logout') }}">Logout</a>
+      </div>
+    </div>
+    {% else %}
+    <a href="{{ url_for('auth.login') }}" style="font-size:13px; color:var(--color-accent); text-decoration:none;">Login</a>
+    {% endif %}
+
+    <button class="theme-toggle" id="themeToggle" title="Toggle dark mode">🌓</button>
+  </nav>
+
+  <!-- ── Flash Messages ──────────────────────────────────────── -->
+  <div class="flash-zone">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="alert alert-{{ category }} alert-dismissible fade show mt-2" role="alert">
+            {{ message }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+          </div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+  </div>
+
+  <!-- ── Page Content ────────────────────────────────────────── -->
+  <main class="rb-main">
+    {% block content %}{% endblock %}
+  </main>
+
+  <!-- ── Help Panel ───────────────────────────────────────────── -->
+  <div class="help-panel" id="helpPanel">
+    <h4>📋 What is ReviewBoard?</h4>
+    <p>A paper review system. Submit PDFs, collect feedback from reviewers, track revisions.</p>
+
+    <h5>📤 How to Submit a Paper for Review</h5>
+    <ol>
+      <li><span class="step">Click "New Ticket"</span> in the top nav</li>
+      <li><span class="step">Fill in the form:</span> Title, abstract/description, and upload your PDF</li>
+      <li><span class="step">Click "Create"</span> — your paper appears on the dashboard under "Open"</li>
+      <li><span class="step">Close the ticket</span> once you got all the reviews you need (ticket owners/admins can mark tickets as closed)</li>
+    </ol>
+
+    <h5>📝 How to Review a Paper</h5>
+    <ol>
+      <li><span class="step">Open a ticket</span> from the dashboard</li>
+      <li><span class="step">Read the PDF</span> in the left panel (use page prev/next or keyboard arrows ← →)</li>
+      <li><span class="step">Write your review:</span> Click anywhere on the PDF to annotate, add your feedback in the text box, choose a highlight color, then click "Submit Review"</li>
+    </ol>
+  </div>
+
+  <!-- ── Footer ──────────────────────────────────────────────── -->
+  <footer class="rb-footer">
+    © 2026 Manoj G · <button class="help-toggle" id="helpToggle">What is it? ▼</button>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+  <script>
+    // ── User chip dropdown ──────────────────────────────────
+    (function(){
+      var chip = document.getElementById('userChip');
+      if(!chip) return;
+      chip.addEventListener('click', function(e){
+        chip.classList.toggle('open');
+        e.stopPropagation();
+      });
+      document.addEventListener('click', function(){
+        chip.classList.remove('open');
+      });
+    })();
+
+    // ── Dark mode toggle ────────────────────────────────────
+    (function(){
+      var btn = document.getElementById('themeToggle');
+      if(!btn) return;
+      btn.addEventListener('click', function(){
+        var html = document.documentElement;
+        var isDark = html.classList.toggle('theme-dark');
+        localStorage.setItem('theme', isDark ? 'dark' : 'light');
+      });
+    })();
+
+    // ── Help panel toggle ───────────────────────────────────
+    (function(){
+      var btn = document.getElementById('helpToggle');
+      var panel = document.getElementById('helpPanel');
+      if(!btn || !panel) return;
+      btn.addEventListener('click', function(e){
+        e.preventDefault();
+        var isHidden = panel.style.display !== 'block';
+        panel.style.display = isHidden ? 'block' : 'none';
+        // Update button arrow
+        btn.textContent = isHidden ? 'What is it? ▲' : 'What is it? ▼';
+        // Scroll panel into view if shown
+        if(isHidden) {
+          panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      });
+    })();
+  </script>
+
+  {% block extra_js %}{% endblock %}
+</body>
+</html>
