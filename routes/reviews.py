@@ -1,14 +1,29 @@
 """Review (comment) routes and PDF annotation handling."""
 
+import re
+import requests
 from datetime import datetime, timezone
-from flask import Blueprint, render_template, redirect, url_for, flash, request, abort
+from flask import Blueprint, render_template, redirect, url_for, flash, request, abort, jsonify
 from flask_login import login_required, current_user
 from flask_wtf.csrf import generate_csrf
 
-from models import db, Review, Ticket
+from models import db, Ticket, Review
 
 # Input length limits (A03 - Injection prevention)
 MAX_BODY_LENGTH = 5000
+MAX_SIMPLIFY_LENGTH = 300
+SIMPLIFY_TIMEOUT = 30  # seconds
+
+# Patterns that indicate potentially harmful/hijacking content
+DANGEROUS_PATTERNS = [
+    r'<script', r'javascript:', r'on\w+\s*=',  # XSS
+    r'\{\{', r'\$\{',  # Template injection
+    r'rm\s+-rf', r'del\s+/[fqs]',  # Destructive commands
+    r'eval\s*\(', r'exec\s*\(',  # Code execution
+    r'SELECT\s+.*\s+FROM', r'INSERT\s+INTO', r'DROP\s+TABLE',  # SQL injection
+    r'https?://', r'www\.',  # URLs (prevent linking/external refs)
+    r'\[\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\]',  # IP address pattern
+]
 
 reviews_bp = Blueprint('reviews', __name__)
 
@@ -104,3 +119,106 @@ def delete_review(review_id):
     db.session.commit()
     flash('Review deleted', 'info')
     return redirect(url_for('tickets.detail', ticket_id=ticket_id))
+
+
+
+@reviews_bp.route('/api/simplify', methods=['POST'])
+@login_required
+def api_simplify_text():
+    """AI-powered text simplification endpoint.
+    
+    Takes selected text (max 300 chars), validates it, and returns
+    an AI-simplified version via external API.
+    """
+    # Validate request is JSON
+    if not request.is_json:
+        return jsonify({'success': False, 'error': 'Invalid request format'}), 400
+    
+    data = request.get_json()
+    text = data.get('text', '').strip()
+    
+    # A03: Server-side length validation
+    if not text:
+        return jsonify({'success': False, 'error': 'No text provided'}), 400
+    
+    if len(text) > MAX_SIMPLIFY_LENGTH:
+        return jsonify({
+            'success': False, 
+            'error': f'Selected text must be {MAX_SIMPLIFY_LENGTH} characters or less for AI simplification'
+        }), 400
+    
+    # A01: Additional security validation - check for dangerous patterns
+    text_lower = text.lower()
+    for pattern in DANGEROUS_PATTERNS:
+        if re.search(pattern, text, re.IGNORECASE):
+            return jsonify({
+                'success': False,
+                'error': 'Text contains potentially unsafe content. Please try different text.'
+            }), 400
+    
+    # Call external AI API
+    ai_endpoint = 'https://artificiallyrewrite14513.caffeinelover.eu/v1/chat/completions'
+    
+    try:
+        response = requests.post(
+            ai_endpoint,
+            json={
+                'cache_prompt': False,
+                'n_keep': 0,
+                'messages': [
+                    {
+                        'role': 'system',
+                        'content': 'Rewrite the text to improve clarity, precision, and formal academic tone. Preserve meaning. Preserve syntax if code. Do not add information.'
+                    },
+                    {
+                        'role': 'user',
+                        'content': text
+                    }
+                ],
+                'max_tokens': 200,
+                'temperature': 0.2,
+                'top_p': 0.9
+            },
+            timeout=SIMPLIFY_TIMEOUT,
+            headers={'Content-Type': 'application/json'}
+        )
+        
+        if response.status_code != 200:
+            return jsonify({
+                'success': False,
+                'error': 'AI service temporarily unavailable. Please try again.'
+            }), 503
+        
+        result = response.json()
+        
+        # Extract simplified text from response
+        choices = result.get('choices', [])
+        if not choices:
+            return jsonify({
+                'success': False,
+                'error': 'Invalid response from AI service'
+            }), 502
+        
+        simplified_text = choices[0].get('message', {}).get('content', '').strip()
+        
+        if not simplified_text:
+            return jsonify({
+                'success': False,
+                'error': 'AI returned empty response'
+            }), 502
+        
+        return jsonify({
+            'success': True,
+            'simplified': simplified_text
+        })
+        
+    except requests.Timeout:
+        return jsonify({
+            'success': False,
+            'error': 'AI request timed out (30s). Please try with shorter text.'
+        }), 504
+    except requests.RequestException as e:
+        return jsonify({
+            'success': False,
+            'error': 'Failed to connect to AI service'
+        }), 503

@@ -262,6 +262,36 @@
       font-size: 12px;
       margin-left: 8px;
     }
+    
+    /* AI Simplify button styling */
+    #simplify-btn {
+      position: relative;
+      transition: all 0.2s ease;
+    }
+    #simplify-btn:hover {
+      background-color: #ffc107 !important;
+      border-color: #ffc107 !important;
+      transform: scale(1.05);
+    }
+    #simplify-btn.loading {
+      pointer-events: none;
+      opacity: 0.7;
+    }
+    #simplify-btn[title]:hover::after {
+      content: attr(title);
+      position: absolute;
+      bottom: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #333;
+      color: white;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      white-space: nowrap;
+      z-index: 1000;
+      margin-bottom: 4px;
+    }
   </style>
 {% endblock %}
 {% block content %}
@@ -326,7 +356,7 @@
         {% if (ticket.owner_id == current_user.id or current_user.is_admin) and ticket.status != 'closed' %}
         <form method="post" action="{{ url_for('tickets.close_ticket', ticket_id=ticket.id) }}" id="close-form" style="display:inline;">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button type="button" class="btn btn-danger btn-sm" onclick="confirmClose()">✕ Close Ticket</button>
+          <button type="button" class="btn btn-outline-danger btn-sm" onclick="confirmClose()">✕ Close</button>
         </form>
         <script>
           function confirmClose() {
@@ -340,7 +370,7 @@
         {% if ticket.status == 'closed' and (ticket.owner_id == current_user.id or current_user.is_admin) %}
         <form method="post" action="{{ url_for('tickets.reopen_ticket', ticket_id=ticket.id) }}" id="reopen-form" style="display:inline;">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button type="button" class="btn btn-success btn-sm" onclick="confirmReopen()">↩️ Reopen Ticket</button>
+          <button type="button" class="btn btn-outline-success btn-sm" onclick="confirmReopen()">↩️ Reopen</button>
         </form>
         <script>
           function confirmReopen() {
@@ -351,7 +381,7 @@
         </script>
         <form method="post" action="{{ url_for('tickets.delete_ticket', ticket_id=ticket.id) }}" id="delete-form" style="display:inline;">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button type="button" class="btn btn-danger btn-sm" onclick="confirmDelete()">🗑️ Delete Ticket</button>
+          <button type="button" class="btn btn-outline-danger btn-sm" onclick="confirmDelete()">🗑️ Delete</button>
         </form>
         <script>
           function confirmDelete() {
@@ -370,7 +400,7 @@
         </select>
         <div class="btn-group btn-group-sm" role="group">
           <button type="button" id="toggle-selection" class="btn btn-success toggle-btn active" onclick="toggleSelectionMode()">
-            ✏️ Click-to-Annotate: ON
+            ✏️ Annot: ON
           </button>
         </div>
         <button id="prev-page" class="btn btn-sm btn-secondary">← Prev</button>
@@ -502,7 +532,7 @@
 <!-- Selection Popup -->
 <div class="overlay-backdrop" id="selection-backdrop" style="display:none;" onclick="closeSelectionPopup()"></div>
 <div class="selection-popup" id="selection-popup" style="display:none;">
-  <h4>📝 Add Comment on Selected Text</h4>
+  <h4>💬 Add Comment</h4>
   <div id="selection-context" style="background:#f5f5f5; padding:10px; border-radius:4px; margin-bottom:10px; max-height:80px; overflow:auto;"></div>
   
   <!-- Markdown toolbar -->
@@ -521,9 +551,25 @@
       <button type="button" class="btn btn-outline-secondary" onclick="insertMd('- ', '', 'list item')" title="Bullet list">• List</button>
       <button type="button" class="btn btn-outline-secondary" onclick="insertMd('> ', '', 'quote')" title="Quote">" Quote</button>
     </div>
+    <div class="btn-group btn-group-sm ms-auto">
+      <button type="button" class="btn btn-outline-warning" id="simplify-btn" onclick="simplifySelectedText()" title="Simplify AI ✨">
+        ✨
+      </button>
+    </div>
   </div>
   
   <textarea id="selection-comment" placeholder="Enter your comment... (Markdown supported)"></textarea>
+  
+  <!-- AI Simplify Error Modal -->
+  <div class="overlay-backdrop" id="ai-error-backdrop" style="display:none; z-index:3000;"></div>
+  <div class="selection-popup" id="ai-error-popup" style="display:none; z-index:3001; background:#fff3f3; border:2px solid #dc3545;">
+    <h5 style="color:#dc3545; margin-bottom:1rem;">⚠️ AI Simplify Limit</h5>
+    <p id="ai-error-message" style="margin-bottom:1rem;"></p>
+    <div class="d-flex justify-content-end">
+      <button class="btn btn-secondary" onclick="closeAiErrorPopup()">OK</button>
+    </div>
+  </div>
+  
   <div class="d-flex justify-content-between align-items-center">
     <small class="text-muted">Tip: Use **bold**, *italic*, `code`, etc.</small>
     <div class="btn-group">
@@ -573,7 +619,7 @@
       manualAddSection.style.display = 'none';
       document.getElementById('selected-text-preview').style.display = 'none';
     } else {
-      toggleBtn.innerHTML = '📝 Click-to-Annotate: OFF';
+      toggleBtn.innerHTML = '📝 Annot: OFF';
       toggleBtn.classList.remove('active');
       toggleBtn.classList.remove('btn-success');
       toggleBtn.classList.add('btn-outline-success');
@@ -631,6 +677,90 @@
     const newCursorPos = start + before.length + selectedText.length;
     textarea.setSelectionRange(newCursorPos, newCursorPos);
     textarea.focus();
+  }
+  
+  // AI Text Simplification
+  function simplifySelectedText() {
+    const textarea = document.getElementById('selection-comment');
+    const selectionContext = document.getElementById('selection-context');
+    
+    // Extract text from "Selected:" section
+    const selectedSpan = selectionContext.querySelector('span');
+    const selectedText = selectedSpan ? selectedSpan.textContent.trim() : '';
+    
+    if (!selectedText) {
+      showAiError('No text selected on the PDF. Please select some text first.');
+      return;
+    }
+    
+    if (selectedText.length > 300) {
+      showAiError(`AI Simplify works for short text (< 300 chars).\n\nYour text is ${selectedText.length} chars.`);
+      return;
+    }
+    
+    // Get the ✨ button and show loading state
+    const simplifyBtn = document.getElementById('simplify-btn');
+    const originalBtnContent = simplifyBtn.innerHTML;
+    simplifyBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
+    simplifyBtn.disabled = true;
+    simplifyBtn.classList.add('loading');
+    
+    // Get fresh CSRF token
+    const csrfToken = document.querySelector('input[name="csrf_token"]').value;
+    
+    // Make API call
+    fetch('/reviews/api/simplify', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': csrfToken,
+        'X-Requested-With': 'XMLHttpRequest'
+      },
+      body: JSON.stringify({ text: selectedText })
+    })
+    .then(response => response.json())
+    .then(data => {
+      // Restore button
+      simplifyBtn.innerHTML = originalBtnContent;
+      simplifyBtn.disabled = false;
+      simplifyBtn.classList.remove('loading');
+      
+      if (data.success) {
+        // Append simplified text on new line with quote
+        const currentValue = textarea.value.trim();
+        const newLine = currentValue ? '\n\n' : '';
+        const quoted = '> ' + data.simplified;
+        textarea.value = currentValue + newLine + quoted;
+        
+        // Position cursor at end
+        const newPos = textarea.value.length;
+        textarea.setSelectionRange(newPos, newPos);
+        textarea.focus();
+      } else {
+        showAiError(data.error || 'Failed to simplify text. Please try again.');
+      }
+    })
+    .catch(error => {
+      console.error('AI simplify error:', error);
+      // Restore button
+      simplifyBtn.innerHTML = originalBtnContent;
+      simplifyBtn.disabled = false;
+      simplifyBtn.classList.remove('loading');
+      showAiError('Network error. Please check your connection and try again.');
+    });
+  }
+  
+  // Show AI error popup
+  function showAiError(message) {
+    document.getElementById('ai-error-message').textContent = message;
+    document.getElementById('ai-error-backdrop').style.display = 'block';
+    document.getElementById('ai-error-popup').style.display = 'block';
+  }
+  
+  // Close AI error popup
+  function closeAiErrorPopup() {
+    document.getElementById('ai-error-backdrop').style.display = 'none';
+    document.getElementById('ai-error-popup').style.display = 'none';
   }
   
   // Initialize PDF
@@ -821,8 +951,9 @@
   
   // Open selection popup
   function openSelectionPopup(text) {
+    // Store raw text in a span for easy extraction
     document.getElementById('selection-context').innerHTML = 
-      `<strong>Selected:</strong> "${text.substring(0, 150)}${text.length > 150 ? '...' : ''}"`;
+      `<strong>Selected:</strong> <span id="raw-selected-text">${text.substring(0, 300)}${text.length > 300 ? '...' : ''}</span>`;
     
     document.getElementById('selection-comment').value = '';
     document.getElementById('selection-backdrop').style.display = 'block';
