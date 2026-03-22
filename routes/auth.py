@@ -12,7 +12,7 @@ from wtforms.validators import DataRequired, Length, Email, EqualTo, ValidationE
 # Simple in-memory rate limiting for login attempts
 _login_attempts = {}  # {ip: [timestamp, timestamp, ...]}
 _MAX_ATTEMPTS = 5
-_LOCKOUT_DURATION = timedelta(minutes=15)
+_LOCKOUT_DURATION = timedelta(minutes=5)
 
 auth_bp = Blueprint("auth", __name__)
 

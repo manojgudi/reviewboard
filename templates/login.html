@@ -7,8 +7,13 @@
     .form-control { font-size: 16px; }
   }
 </style>
-<div class="row justify-content-center mt-5">
+<div class="row justify-content-center mt-4">
   <div class="col-md-4 col-11">
+    <!-- Logo Banner -->
+    <div class="text-center mb-4">
+      <img src="{{ url_for('static', filename='reviewboard-banner.svg') }}" alt="ReviewBoard" style="max-width: 100%; height: auto;">
+    </div>
+    
     <h2 class="mb-4">Login</h2>
     <form method="post">
       {{ form.hidden_tag() }}

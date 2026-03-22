@@ -400,7 +400,7 @@
         </select>
         <div class="btn-group btn-group-sm" role="group">
           <button type="button" id="toggle-selection" class="btn btn-success toggle-btn active" onclick="toggleSelectionMode()">
-            ✏️ Annot: ON
+            ✏️ Click-to-Annotate: ON
           </button>
         </div>
         <button id="prev-page" class="btn btn-sm btn-secondary">← Prev</button>
@@ -488,6 +488,38 @@
       <p class="text-muted">No reviews yet.</p>
       {% endfor %}
     </div>
+    
+    <!-- VERDICT SECTION -->
+    {% set is_creator = (ticket.owner_id == current_user.id) %}
+    
+    {% if is_creator %}
+    <!-- Creator view: See other reviewers' verdicts -->
+    <div id="verdict-section-creator" class="mt-3 p-3 bg-light rounded">
+      <h6>📊 Reviewer Verdicts</h6>
+      <div id="creator-verdicts-list">
+        <p class="text-muted mb-0"><em>Loading verdicts...</em></p>
+      </div>
+    </div>
+    {% else %}
+    <!-- Reviewer view: Give your own verdict -->
+    <div id="verdict-section-reviewer" class="mt-3 p-3 bg-light rounded">
+      <h6>🏁 Your Final Verdict</h6>
+      <div class="d-flex gap-2 align-items-center">
+        <select id="verdict-select" class="form-select form-select-sm" style="max-width: 200px;">
+          <option value="no_verdict">No Verdict</option>
+          <option value="strong_accept">👍 Strong Accept</option>
+          <option value="weak_accept">👌 Weak Accept</option>
+          <option value="weak_reject">👎 Weak Reject</option>
+          <option value="strong_reject">👎👎 Strong Reject</option>
+        </select>
+        <button type="button" class="btn btn-sm btn-primary" id="save-verdict-btn" onclick="saveVerdict()">
+          Save
+        </button>
+        <span id="verdict-status" class="text-muted small"></span>
+      </div>
+      <small class="text-muted">Your verdict is saved and can be changed anytime.</small>
+    </div>
+    {% endif %}
     
     <hr>
     
@@ -619,7 +651,7 @@
       manualAddSection.style.display = 'none';
       document.getElementById('selected-text-preview').style.display = 'none';
     } else {
-      toggleBtn.innerHTML = '📝 Annot: OFF';
+      toggleBtn.innerHTML = '📝 Annotate OFF';
       toggleBtn.classList.remove('active');
       toggleBtn.classList.remove('btn-success');
       toggleBtn.classList.add('btn-outline-success');
@@ -1149,6 +1181,100 @@
   // Navigation
   prevBtn.addEventListener('click', () => renderPage(currentPage - 1));
   nextBtn.addEventListener('click', () => renderPage(currentPage + 1));
+  
+  // Verdict functions
+  function saveVerdict() {
+    const verdict = document.getElementById('verdict-select').value;
+    const statusEl = document.getElementById('verdict-status');
+    const saveBtn = document.getElementById('save-verdict-btn');
+    const csrfToken = document.querySelector('input[name="csrf_token"]').value;
+    
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving...';
+    statusEl.textContent = '';
+    
+    fetch(`/api/tickets/{{ ticket.id }}/verdict`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'X-CSRFToken': csrfToken
+      },
+      body: JSON.stringify({ verdict: verdict })
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        statusEl.textContent = '✓ Saved!';
+        statusEl.className = 'text-success small';
+      } else {
+        statusEl.textContent = 'Error: ' + (data.error || 'Failed');
+        statusEl.className = 'text-danger small';
+      }
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save';
+    })
+    .catch(err => {
+      console.error('Verdict save error:', err);
+      statusEl.textContent = 'Network error';
+      statusEl.className = 'text-danger small';
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save';
+    });
+  }
+  
+  function loadMyVerdict() {
+    fetch(`/api/tickets/{{ ticket.id }}/verdict`)
+    .then(r => r.json())
+    .then(data => {
+      if (data.verdict) {
+        document.getElementById('verdict-select').value = data.verdict;
+      }
+    })
+    .catch(err => {
+      console.error('Failed to load verdict:', err);
+      // Silently keep default "No Verdict" selection
+    });
+  }
+  
+  function loadCreatorVerdicts() {
+    fetch(`/api/tickets/{{ ticket.id }}/verdicts`)
+    .then(r => r.json())
+    .then(data => {
+      const container = document.getElementById('creator-verdicts-list');
+      if (data.verdicts && data.verdicts.length > 0) {
+        container.innerHTML = data.verdicts.map(v => {
+          const colorClass = {
+            'strong_accept': 'success',
+            'weak_accept': 'info',
+            'weak_reject': 'warning',
+            'strong_reject': 'danger'
+          }[v.verdict] || 'secondary';
+          const label = {
+            'strong_accept': '👍 Strong Accept',
+            'weak_accept': '👌 Weak Accept',
+            'weak_reject': '👎 Weak Reject',
+            'strong_reject': '👎👎 Strong Reject'
+          }[v.verdict] || v.verdict;
+          return `<span class="badge bg-${colorClass} me-1 mb-1">${v.username}: ${label}</span>`;
+        }).join('');
+      } else {
+        container.innerHTML = '<p class="text-muted mb-0"><em>No verdicts from reviewers yet.</em></p>';
+      }
+    })
+    .catch(err => {
+      console.error('Failed to load verdicts:', err);
+      // Show friendly message for both existing tickets (no verdicts) and new feature (no table yet)
+      document.getElementById('creator-verdicts-list').innerHTML = 
+        '<p class="text-muted mb-0"><em>No verdict available.</em></p>';
+    });
+  }
+  
+  // Init verdict section on page load
+  {% if ticket.owner_id != current_user.id %}
+  loadMyVerdict();
+  {% else %}
+  loadCreatorVerdicts();
+  {% endif %}
   
   // Keyboard navigation
   document.addEventListener('keydown', (e) => {

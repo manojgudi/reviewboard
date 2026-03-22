@@ -30,14 +30,15 @@ from routes.tickets import tickets_bp
 from routes.reviews import reviews_bp
 from routes.admin import admin_bp
 from routes.annotations import annotations_bp
+from routes.verdicts import verdicts_bp
 
 
 def create_app(test_config=None):
     app = Flask(__name__, instance_relative_config=False)
     
-    # Security: Enforce SECRET_KEY from environment variable
+    # Security: Enforce SECRET_KEY from environment variable (skip for testing)
     secret_key = os.getenv("SECRET_KEY")
-    if not secret_key:
+    if not secret_key and not (test_config and test_config.get("TESTING")):
         raise ValueError("SECRET_KEY environment variable must be set. "
                         "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\"")
     
@@ -54,6 +55,15 @@ def create_app(test_config=None):
         MAX_CONTENT_LENGTH=20 * 1024 * 1024,  # 20 MiB max upload
         WTF_CSRF_TIME_LIMIT=3600,              # 1 hour CSRF token lifetime
     )
+
+    # SAFETY: Force test database when TESTING flag is set AND no URI specified
+    # This prevents tests from accidentally touching production data
+    if test_config and test_config.get("TESTING"):
+        if "SQLALCHEMY_DATABASE_URI" not in test_config:
+            # Use a separate test database file
+            db_path = os.path.join(os.path.dirname(app.root_path), "test_reviewboard.db")
+            app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{db_path}"
+            print(f"⚠️  SAFETY: TESTING mode - using isolated database: {db_path}")
 
     if test_config:
         app.config.update(test_config)
@@ -134,6 +144,7 @@ def create_app(test_config=None):
     app.register_blueprint(reviews_bp, url_prefix="/reviews")
     app.register_blueprint(admin_bp, url_prefix="/admin")
     app.register_blueprint(annotations_bp, url_prefix="/api/annotation")
+    app.register_blueprint(verdicts_bp)
 
     # ── Security Headers (A05: Security Misconfiguration) ──
     @app.after_request

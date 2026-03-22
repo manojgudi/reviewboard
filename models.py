@@ -98,6 +98,65 @@ class Review(db.Model):
         return f"<Review #{self.id} on Ticket #{self.ticket_id}>"
 
 
+# Verdict constants
+VERDICT_CHOICES = [
+    ("no_verdict", "No Verdict"),
+    ("strong_accept", "Strong Accept"),
+    ("weak_accept", "Weak Accept"),
+    ("weak_reject", "Weak Reject"),
+    ("strong_reject", "Strong Reject"),
+]
+
+VERDICT_LABELS = {
+    "strong_accept": "👍 Strong Accept",
+    "weak_accept": "👌 Weak Accept",
+    "weak_reject": "👎 Weak Reject",
+    "strong_reject": "👎👎 Strong Reject",
+    "no_verdict": "No Verdict",
+}
+
+VERDICT_COLORS = {
+    "strong_accept": "success",
+    "weak_accept": "info",
+    "weak_reject": "warning",
+    "strong_reject": "danger",
+    "no_verdict": "secondary",
+}
+
+
+class Verdict(db.Model):
+    """Final verdict for a ticket by a reviewer."""
+    __tablename__ = "verdicts"
+
+    id = db.Column(db.Integer, primary_key=True)
+    ticket_id = db.Column(db.Integer, db.ForeignKey("tickets.id"), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    verdict = db.Column(db.String(20), nullable=False, default="no_verdict")
+    created_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc),
+                           onupdate=lambda: datetime.now(timezone.utc))
+
+    # Relationships
+    user = db.relationship("User", backref=db.backref("verdicts", lazy="dynamic"))
+    ticket = db.relationship("Ticket", backref=db.backref("verdicts", lazy="dynamic"))
+
+    # Unique constraint: one verdict per user per ticket
+    __table_args__ = (
+        db.UniqueConstraint('ticket_id', 'user_id', name='unique_verdict_per_user_ticket'),
+    )
+
+    @property
+    def verdict_label(self):
+        return VERDICT_LABELS.get(self.verdict, self.verdict)
+
+    @property
+    def verdict_color_class(self):
+        return VERDICT_COLORS.get(self.verdict, "secondary")
+
+    def __repr__(self):
+        return f"<Verdict #{self.id} {self.verdict} by User #{self.user_id} on Ticket #{self.ticket_id}>"
+
+
 class Annotation(db.Model):
     """PDF/Document annotations with highlighting and comments."""
     __tablename__ = "annotations"
