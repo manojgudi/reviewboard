@@ -227,6 +227,64 @@
       margin-bottom: 1rem;
     }
     
+    /* AI Review section - theme aware */
+    .ai-review-card {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border-radius: 8px;
+      color: #fff;
+    }
+    .ai-review-title {
+      color: #fff !important;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+    }
+    .ai-review-status {
+      color: rgba(255,255,255,0.9);
+      text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+    }
+    .ai-review-btn {
+      background: #fff;
+      color: #667eea;
+      border: none;
+      font-weight: 500;
+    }
+    .ai-review-btn:hover {
+      background: #f0f0f0;
+      color: #764ba2;
+    }
+    .ai-review-progress-bar {
+      height: 8px;
+      background: rgba(255,255,255,0.3);
+    }
+    .ai-review-progress-text {
+      color: rgba(255,255,255,0.9);
+      text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+    }
+    
+    /* Dark mode AI Review */
+    .theme-dark .ai-review-card {
+      background: linear-gradient(135deg, #4a5568 0%, #2d3748 100%);
+    }
+    .theme-dark .ai-review-title {
+      color: #f7fafc !important;
+    }
+    .theme-dark .ai-review-status {
+      color: rgba(247,250,252,0.9);
+    }
+    .theme-dark .ai-review-btn {
+      background: #e2e8f0;
+      color: #a0aec0;
+    }
+    .theme-dark .ai-review-btn:hover {
+      background: #cbd5e0;
+      color: #718096;
+    }
+    .theme-dark .ai-review-progress-bar {
+      background: rgba(255,255,255,0.2);
+    }
+    .theme-dark .ai-review-progress-text {
+      color: rgba(247,250,252,0.9);
+    }
+    
     /* Review markdown content */
     .review-body pre {
       background: var(--color-bg);
@@ -447,24 +505,24 @@
     </div>
     
     <!-- AI REVIEW SECTION -->
-    {% if ticket.pdf_filename and ticket.status != 'closed' %}
-    <div id="ai-review-section" class="mt-3 p-3 bg-gradient" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 8px; color: white;">
+    {% if ticket.pdf_filename and ticket.status != 'closed' and (ticket.owner_id == current_user.id or current_user.is_admin) %}
+    <div id="ai-review-section" class="mt-3 p-3 ai-review-card">
       <div class="d-flex justify-content-between align-items-center">
         <div>
-          <h6 style="margin:0; color:white;">🤖 AI Review (Local Ollama)</h6>
-          <small style="color: rgba(255,255,255,0.8);" id="ai-review-status-text">Checking status...</small>
+          <h6 class="ai-review-title" style="margin:0;">🤖 AI Review (Local Ollama)</h6>
+          <small class="ai-review-status" id="ai-review-status-text">Checking status...</small>
         </div>
         <div id="ai-review-actions">
-          <button type="button" class="btn btn-sm btn-light" id="ai-review-btn" onclick="startAiReview()">
+          <button type="button" class="btn btn-sm ai-review-btn" id="ai-review-btn" onclick="startAiReview()">
             🚀 Start AI Review
           </button>
         </div>
       </div>
       <div id="ai-review-progress" class="mt-2" style="display:none;">
-        <div class="progress" style="height: 8px; background: rgba(255,255,255,0.3);">
+        <div class="progress ai-review-progress-bar">
           <div class="progress-bar bg-warning" id="ai-progress-bar" role="progressbar" style="width: 0%;"></div>
         </div>
-        <small style="color: rgba(255,255,255,0.9);" id="ai-progress-text">0%</small>
+        <small class="ai-review-progress-text" id="ai-progress-text">0%</small>
       </div>
     </div>
     {% endif %}
@@ -474,7 +532,7 @@
     <div>
       <h5>Reviews ({{ ticket.reviews.count() }})</h5>
       {% for review in ticket.reviews.order_by(Review.created_at.desc()).all() %}
-      {% set color_map = {'yellow': '#ffc107', 'green': '#4caf50', 'blue': '#2196f3', 'pink': '#e91e63'} %}
+      {% set color_map = {'yellow': '#ffc107', 'green': '#4caf50', 'blue': '#2196f3', 'pink': '#e91e63', 'lightblue': '#ADD8E6'} %}
       {% set border_color = color_map.get(review.highlight_color, '#ffc107') %}
       <div class="card mb-2" style="border-left:4px solid {{ border_color }};">
         <div class="card-body p-2">
@@ -1347,6 +1405,9 @@
       startPolling();
     } else if (data.status === 'completed') {
       statusText.textContent = '✅ Review complete! Refresh to see AI comments.';
+      statusText.style.color = '#fff';
+      statusText.style.fontWeight = 'bold';
+      statusText.style.textShadow = '0 1px 2px rgba(0,0,0,0.5)';
       progressDiv.style.display = 'block';
       progressBar.style.width = '100%';
       progressBar.classList.remove('bg-warning');
@@ -1358,6 +1419,8 @@
       stopPolling();
     } else if (data.status === 'failed') {
       statusText.textContent = '❌ Failed: ' + (data.error_message || 'Unknown error');
+      statusText.style.color = '#ffe0e0';
+      statusText.style.textShadow = '0 1px 2px rgba(0,0,0,0.5)';
       progressDiv.style.display = 'none';
       btn.disabled = false;
       btn.innerHTML = '🔄 Retry';
