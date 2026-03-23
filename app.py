@@ -31,6 +31,7 @@ from routes.reviews import reviews_bp
 from routes.admin import admin_bp
 from routes.annotations import annotations_bp
 from routes.verdicts import verdicts_bp
+from routes.ai_review import ai_review_bp
 
 
 def create_app(test_config=None):
@@ -145,6 +146,7 @@ def create_app(test_config=None):
     app.register_blueprint(admin_bp, url_prefix="/admin")
     app.register_blueprint(annotations_bp, url_prefix="/api/annotation")
     app.register_blueprint(verdicts_bp)
+    app.register_blueprint(ai_review_bp)
 
     # ── Security Headers (A05: Security Misconfiguration) ──
     @app.after_request

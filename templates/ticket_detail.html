@@ -446,6 +446,29 @@
       {% endif %}
     </div>
     
+    <!-- AI REVIEW SECTION -->
+    {% if ticket.pdf_filename and ticket.status != 'closed' %}
+    <div id="ai-review-section" class="mt-3 p-3 bg-gradient" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 8px; color: white;">
+      <div class="d-flex justify-content-between align-items-center">
+        <div>
+          <h6 style="margin:0; color:white;">🤖 AI Review (Local Ollama)</h6>
+          <small style="color: rgba(255,255,255,0.8);" id="ai-review-status-text">Checking status...</small>
+        </div>
+        <div id="ai-review-actions">
+          <button type="button" class="btn btn-sm btn-light" id="ai-review-btn" onclick="startAiReview()">
+            🚀 Start AI Review
+          </button>
+        </div>
+      </div>
+      <div id="ai-review-progress" class="mt-2" style="display:none;">
+        <div class="progress" style="height: 8px; background: rgba(255,255,255,0.3);">
+          <div class="progress-bar bg-warning" id="ai-progress-bar" role="progressbar" style="width: 0%;"></div>
+        </div>
+        <small style="color: rgba(255,255,255,0.9);" id="ai-progress-text">0%</small>
+      </div>
+    </div>
+    {% endif %}
+    
     <hr>
     
     <div>
@@ -1276,6 +1299,133 @@
   loadCreatorVerdicts();
   {% endif %}
   
+  // AI Review Functions
+  let aiReviewPollInterval = null;
+  
+  function checkAiReviewStatus() {
+    const ticketId = {{ ticket.id }};
+    
+    fetch(`/api/ai-review/${ticketId}/status`)
+      .then(r => r.json())
+      .then(data => {
+        updateAiReviewUI(data);
+      })
+      .catch(err => {
+        console.error('Failed to check AI review status:', err);
+        document.getElementById('ai-review-status-text').textContent = 'Error checking status';
+      });
+  }
+  
+  function updateAiReviewUI(data) {
+    const statusText = document.getElementById('ai-review-status-text');
+    const progressDiv = document.getElementById('ai-review-progress');
+    const progressBar = document.getElementById('ai-progress-bar');
+    const progressText = document.getElementById('ai-progress-text');
+    const btn = document.getElementById('ai-review-btn');
+    
+    if (data.status === 'not_started' || data.status === 'no_job') {
+      statusText.textContent = 'Not started';
+      progressDiv.style.display = 'none';
+      btn.disabled = false;
+      btn.innerHTML = '🚀 Start AI Review';
+      stopPolling();
+    } else if (data.status === 'queued') {
+      statusText.textContent = 'Queued...';
+      progressDiv.style.display = 'block';
+      progressBar.style.width = '0%';
+      progressText.textContent = 'Waiting in queue';
+      btn.disabled = true;
+      btn.innerHTML = '⏳ Queued...';
+      startPolling();
+    } else if (data.status === 'processing') {
+      statusText.textContent = `Processing: ${data.completed_sections}/${data.total_sections} sections`;
+      progressDiv.style.display = 'block';
+      progressBar.style.width = data.progress_percent + '%';
+      progressText.textContent = data.progress_percent + '%';
+      btn.disabled = true;
+      btn.innerHTML = '⚙️ Processing...';
+      startPolling();
+    } else if (data.status === 'completed') {
+      statusText.textContent = '✅ Review complete! Refresh to see AI comments.';
+      progressDiv.style.display = 'block';
+      progressBar.style.width = '100%';
+      progressBar.classList.remove('bg-warning');
+      progressBar.classList.add('bg-success');
+      progressText.textContent = '100%';
+      btn.disabled = false;
+      btn.innerHTML = '🔄 Refresh';
+      btn.onclick = () => location.reload();
+      stopPolling();
+    } else if (data.status === 'failed') {
+      statusText.textContent = '❌ Failed: ' + (data.error_message || 'Unknown error');
+      progressDiv.style.display = 'none';
+      btn.disabled = false;
+      btn.innerHTML = '🔄 Retry';
+      btn.onclick = startAiReview;
+      stopPolling();
+    }
+  }
+  
+  function startPolling() {
+    if (!aiReviewPollInterval) {
+      aiReviewPollInterval = setInterval(checkAiReviewStatus, 3000);
+    }
+  }
+  
+  function stopPolling() {
+    if (aiReviewPollInterval) {
+      clearInterval(aiReviewPollInterval);
+      aiReviewPollInterval = null;
+    }
+  }
+  
+  function startAiReview() {
+    const ticketId = {{ ticket.id }};
+    const btn = document.getElementById('ai-review-btn');
+    const statusText = document.getElementById('ai-review-status-text');
+    
+    btn.disabled = true;
+    btn.innerHTML = '⏳ Starting...';
+    statusText.textContent = 'Starting review...';
+    
+    fetch(`/api/ai-review/${ticketId}`, {
+      method: 'POST',
+      headers: {
+        'X-Requested-With': 'XMLHttpRequest',
+        'X-CSRFToken': document.querySelector('input[name="csrf_token"]').value
+      }
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) {
+        statusText.textContent = '❌ Error: ' + data.error;
+        btn.disabled = false;
+        btn.innerHTML = '🔄 Retry';
+        if (data.status === 'processing') {
+          updateAiReviewUI({ status: 'processing', completed_sections: data.completed_sections, total_sections: data.total_sections, progress_percent: 0 });
+        }
+      } else {
+        updateAiReviewUI({ 
+          status: data.status, 
+          completed_sections: data.completed_sections, 
+          total_sections: data.total_sections,
+          progress_percent: 0 
+        });
+      }
+    })
+    .catch(err => {
+      console.error('Failed to start AI review:', err);
+      statusText.textContent = '❌ Network error';
+      btn.disabled = false;
+      btn.innerHTML = '🔄 Retry';
+    });
+  }
+  
+  // Check AI review status on page load
+  {% if ticket.pdf_filename and ticket.status != 'closed' %}
+  checkAiReviewStatus();
+  {% endif %}
+  
   // Keyboard navigation
   document.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
@@ -1285,6 +1435,6 @@
   
   // Init
   init();
-  {% endif %}  {# End of PDF-specific code #}
+  {% endif %}
 </script>
 {% endblock %}

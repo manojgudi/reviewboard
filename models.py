@@ -182,3 +182,61 @@ class Annotation(db.Model):
 
     def __repr__(self):
         return f"<Annotation #{self.id} on Ticket #{self.ticket_id}>"
+
+
+class AIReviewJob(db.Model):
+    """Background job for AI-powered PDF review using Ollama."""
+    __tablename__ = "ai_review_jobs"
+
+    id = db.Column(db.Integer, primary_key=True)
+    ticket_id = db.Column(db.Integer, db.ForeignKey("tickets.id"), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)  # Who requested
+    status = db.Column(db.String(20), nullable=False, default="queued")  # queued | processing | completed | failed
+    total_sections = db.Column(db.Integer, nullable=False, default=0)
+    completed_sections = db.Column(db.Integer, nullable=False, default=0)
+    error_message = db.Column(db.Text, nullable=True)  # Summary error if failed
+    job_id = db.Column(db.String(100), nullable=True)  # RQ job ID for tracking
+    created_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    completed_at = db.Column(db.DateTime, nullable=True)
+
+    # Relationships
+    ticket = db.relationship("Ticket", backref=db.backref("ai_review_jobs", lazy="dynamic"))
+    user = db.relationship("User", backref=db.backref("ai_review_jobs", lazy="dynamic"))
+
+    @property
+    def progress_percent(self):
+        if self.total_sections == 0:
+            return 0
+        return int((self.completed_sections / self.total_sections) * 100)
+
+    @property
+    def is_complete(self):
+        return self.status == "completed"
+
+    @property
+    def is_failed(self):
+        return self.status == "failed"
+
+    def __repr__(self):
+        return f"<AIReviewJob #{self.id} ticket={self.ticket_id} status={self.status}>"
+
+
+class AIReviewSection(db.Model):
+    """Individual section review from AI (stored as a comment/review)."""
+    __tablename__ = "ai_review_sections"
+
+    id = db.Column(db.Integer, primary_key=True)
+    job_id = db.Column(db.Integer, db.ForeignKey("ai_review_jobs.id"), nullable=False, index=True)
+    section_index = db.Column(db.Integer, nullable=False)  # 0-based index of section
+    section_title = db.Column(db.String(500), nullable=True)  # Heading/title of section
+    section_content_hash = db.Column(db.String(64), nullable=True)  # Hash to avoid duplicate work
+    review = db.Column(db.Text, nullable=True)  # The AI's review text
+    success = db.Column(db.Boolean, nullable=False, default=False)  # Did AI successfully review?
+    error_message = db.Column(db.Text, nullable=True)  # Error if failed
+    created_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+
+    # Relationship
+    job = db.relationship("AIReviewJob", backref=db.backref("sections", lazy="dynamic"))
+
+    def __repr__(self):
+        return f"<AIReviewSection #{self.id} job={self.job_id} section={self.section_index}>"

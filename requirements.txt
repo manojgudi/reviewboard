@@ -19,5 +19,12 @@ Pillow>=10.0,<11.0
 # HTTP requests (for AI API calls)
 requests>=2.31,<3.0
 
+# PDF text extraction for AI review
+pymupdf>=1.24,<2.0
+
+# Background job queue for AI reviews
+redis>=5.0,<6.0
+rq>=1.16,<2.0
+
 # Production server
 gunicorn>=21.0,<23.0
