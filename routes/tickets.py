@@ -15,7 +15,7 @@ from flask import Blueprint, render_template, redirect, url_for, flash, request,
 from flask_login import login_required, current_user
 from werkzeug.utils import secure_filename
 
-from models import db, Ticket, Review
+from models import db, Ticket, Review, AIReviewJob, AIReviewSection, Annotation, Verdict
 
 tickets_bp = Blueprint('tickets', __name__)
 
@@ -86,6 +86,209 @@ def _sort_by_deadline(tickets):
     return [t for t, _ in with_deadline] + without_deadline
 
 
+def _start_ai_review_if_enabled(ticket):
+    """
+    Start AI review for a ticket if enabled.
+    
+    Edge cases handled (all fail silently with logging):
+    - No PDF attached
+    - PDF file not found on disk
+    - PDF has no extractable text (scanned)
+    - Ollama server unavailable
+    - Ticket deleted mid-review
+    - Existing job already in progress
+    """
+    import logging
+    import os
+    
+    ai_logger = logging.getLogger('ai_review')
+    
+    # Edge case: No PDF attached
+    if not ticket.pdf_filename:
+        ai_logger.debug(f"[AI REVIEW] Ticket {ticket.id} has no PDF, skipping")
+        return
+    
+    pdf_path = os.path.join(current_app.config['UPLOAD_FOLDER'], ticket.pdf_filename)
+    
+    # Edge case: PDF file not found on disk
+    if not os.path.exists(pdf_path):
+        ai_logger.warning(f"[AI REVIEW] Ticket {ticket.id}: PDF file not found on disk: {ticket.pdf_filename}")
+        return
+    
+    # Import here to avoid circular imports
+    from models import AIReviewJob
+    from services.ai_reviewer import chunk_pdf_by_sections
+    
+    # Edge case: Check for existing pending job (prevents duplicate processing)
+    existing_job = AIReviewJob.query.filter(
+        AIReviewJob.ticket_id == ticket.id,
+        AIReviewJob.status.in_(['queued', 'processing'])
+    ).first()
+    
+    if existing_job:
+        ai_logger.debug(f"[AI REVIEW] Ticket {ticket.id} already has pending AI review job {existing_job.id}")
+        return
+    
+    try:
+        # Chunk the PDF
+        sections = chunk_pdf_by_sections(pdf_path)
+        
+        # Edge case: No text could be extracted (scanned PDF or corrupted)
+        if not sections:
+            ai_logger.warning(f"[AI REVIEW] Ticket {ticket.id}: No text extracted from PDF (may be scanned or corrupted)")
+            # Still create a job record to track the failure
+            job = AIReviewJob(
+                ticket_id=ticket.id,
+                user_id=ticket.owner_id,
+                status='failed',
+                total_sections=0,
+                completed_sections=0,
+                error_message='No text could be extracted from PDF. The file may be scanned or corrupted.'
+            )
+            db.session.add(job)
+            db.session.commit()
+            return
+        
+        # Create job record
+        job = AIReviewJob(
+            ticket_id=ticket.id,
+            user_id=ticket.owner_id,
+            status='queued',
+            total_sections=len(sections),
+            completed_sections=0
+        )
+        db.session.add(job)
+        db.session.commit()
+        
+        ai_logger.info(f"[AI REVIEW] Created job {job.id} for ticket {ticket.id} ({len(sections)} sections)")
+        
+        # Queue for background processing
+        try:
+            from worker import queue_ai_review_job
+            rq_job = queue_ai_review_job(job.id)
+            job.job_id = rq_job.id
+            job.status = 'processing'
+            db.session.commit()
+            ai_logger.info(f"[AI REVIEW] Queued job {job.id} to Redis (RQ job {rq_job.id})")
+        except Exception as e:
+            # If Redis/RQ not available, process synchronously
+            ai_logger.warning(f"[AI REVIEW] Redis/RQ not available, processing synchronously: {e}")
+            job.status = 'processing'
+            db.session.commit()
+            
+            # Process directly (blocking)
+            _process_ai_review_job_sync(job.id, sections)
+            
+    except Exception as e:
+        ai_logger.error(f"[AI REVIEW] Failed to start AI review for ticket {ticket.id}: {e}")
+
+
+def _process_ai_review_job_sync(job_id: int, sections):
+    """
+    Process AI review job synchronously (fallback when Redis not available).
+    
+    Edge cases handled (all fail silently with logging):
+    - Job deleted from database
+    - Ticket deleted mid-review
+    - No sections to process
+    - Ollama failures (partial or complete)
+    """
+    import logging
+    
+    ai_logger = logging.getLogger('ai_review')
+    
+    job = db.session.get(AIReviewJob, job_id)
+    
+    # Edge case: Job was deleted
+    if not job:
+        ai_logger.warning(f"[AI REVIEW] Job {job_id} not found in database, skipping")
+        return
+    
+    # Edge case: Ticket was deleted mid-review
+    from models import Ticket
+    ticket = db.session.get(Ticket, job.ticket_id)
+    if not ticket:
+        ai_logger.warning(f"[AI REVIEW] Ticket {job.ticket_id} was deleted, cancelling job {job_id}")
+        job.status = 'cancelled'
+        job.error_message = 'Ticket was deleted during review'
+        db.session.commit()
+        return
+    
+    # Edge case: No sections to process
+    if not sections:
+        ai_logger.warning(f"[AI REVIEW] Job {job_id}: No sections provided")
+        job.status = 'failed'
+        job.error_message = 'No sections extracted from PDF'
+        db.session.commit()
+        return
+    
+    try:
+        from services.ai_reviewer import process_pdf_sections
+        
+        # Pass ticket_id and db_session for ticket existence check
+        results = process_pdf_sections(sections, job_id=job.job_id, 
+                                        ticket_id=job.ticket_id, db_session=db.session)
+        
+        # Check if results were skipped due to ticket deletion
+        if not results and job.status == 'cancelled':
+            ai_logger.warning(f"[AI REVIEW] Job {job_id} cancelled: ticket deleted during review")
+            return
+        
+        # Store results
+        for result in results:
+            section = sections[result.section_index]
+            
+            # Create AIReviewSection record
+            from models import AIReviewSection
+            section_record = AIReviewSection(
+                job_id=job.id,
+                section_index=result.section_index,
+                section_title=section.title,
+                section_content_hash=section.content_hash,
+                review=result.review if result.success else None,
+                success=result.success,
+                error_message=result.error if not result.success else None
+            )
+            db.session.add(section_record)
+            
+            job.completed_sections += 1
+            
+            # Create review comment for successful sections
+            if result.success and result.review:
+                review = Review(
+                    ticket_id=job.ticket_id,
+                    author_id=job.user_id,
+                    body=f"**🤖 AI Review** ({section.title})\n\n{result.review}",
+                    highlight_color='lightblue',
+                    pdf_page=section.page_start
+                )
+                db.session.add(review)
+        
+        # Determine final status
+        success_count = sum(1 for r in results if r.success)
+        if success_count == len(results):
+            job.status = 'completed'
+            ai_logger.info(f"[AI REVIEW] Job {job_id} completed successfully ({success_count}/{len(results)} sections)")
+        elif success_count > 0:
+            job.status = 'partial'
+            job.error_message = f'{success_count}/{len(results)} sections reviewed'
+            ai_logger.warning(f"[AI REVIEW] Job {job_id} partially completed ({success_count}/{len(results)} sections)")
+        else:
+            job.status = 'failed'
+            job.error_message = 'All sections failed to review'
+            ai_logger.error(f"[AI REVIEW] Job {job_id} failed: all {len(results)} sections failed")
+        
+        job.completed_at = db.func.now()
+        db.session.commit()
+        
+    except Exception as e:
+        ai_logger.error(f"[AI REVIEW] Job {job_id} failed with exception: {e}")
+        job.status = 'failed'
+        job.error_message = str(e)
+        job.completed_at = db.func.now()
+        db.session.commit()
+
+
 @tickets_bp.route('/board')
 @login_required
 def board():
@@ -112,6 +315,7 @@ def new_ticket():
         description = request.form.get('description', '').strip()
         deadline_str = request.form.get('deadline', '').strip()
         pdf_file = request.files.get('pdf')
+        request_ai_review = request.form.get('request_ai_review') == 'on'
         
         # A03: Server-side input validation
         if not title:
@@ -149,9 +353,15 @@ def new_ticket():
             pdf_original_name=pdf_original,
             owner_id=current_user.id,
             deadline=deadline,
+            request_ai_review=request_ai_review,
         )
         db.session.add(ticket)
         db.session.commit()
+        
+        # Auto-start AI review if requested and PDF was uploaded
+        if request_ai_review and pdf_filename:
+            _start_ai_review_if_enabled(ticket)
+        
         flash('Ticket created', 'success')
         return redirect(url_for('tickets.board'))
     return render_template('ticket_new.html')
@@ -278,18 +488,30 @@ def reopen_ticket(ticket_id):
 def delete_ticket(ticket_id):
     """Delete a ticket. Only owner or admin can delete."""
     ticket = Ticket.query.get_or_404(ticket_id)
-    
+
     # A01: Broken Access Control - enforce ownership/admin check
     if not (current_user.is_admin or ticket.owner_id == current_user.id):
         abort(403)
-    
+
     # Get the PDF filename for deletion
     pdf_filename = ticket.pdf_filename
-    
-    # Delete the ticket (cascades to reviews and annotations)
+
+    # ── Clean up children with NO ACTION FKs (must delete before parent) ──
+    # 1. AIReviewSections + AIReviewJobs (use ORM to avoid FK violations)
+    for job in ticket.ai_review_jobs.all():
+        AIReviewSection.query.filter_by(job_id=job.id).delete(synchronize_session=False)
+        db.session.delete(job)
+    # 2. Verdicts (blocked by verdicts.ticket_id → NO ACTION)
+    db.session.execute(db.text('DELETE FROM verdicts WHERE ticket_id = :tid'),
+                       [{'tid': ticket_id}])
+    # 3. Annotations (blocked by annotations.ticket_id → NO ACTION)
+    db.session.execute(db.text('DELETE FROM annotations WHERE ticket_id = :tid'),
+                       [{'tid': ticket_id}])
+
+    # Delete the ticket (Review cascade works because Review.ticket has cascade="all, delete-orphan")
     db.session.delete(ticket)
     db.session.commit()
-    
+
     # A08: Delete the associated PDF file from disk
     if pdf_filename:
         try:
@@ -300,7 +522,7 @@ def delete_ticket(ticket_id):
             # Log error but don't fail the deletion
             import logging
             logging.getLogger('security').warning(f"Failed to delete PDF file: {pdf_filename}, error: {e}")
-    
+
     flash('Ticket deleted', 'info')
     return redirect(url_for('tickets.board'))
 

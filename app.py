@@ -6,8 +6,10 @@ Run with:
 
 import os
 import re
+import logging
 from datetime import timedelta
 from io import BytesIO
+from logging.handlers import RotatingFileHandler
 
 from markupsafe import Markup
 from markdown2 import markdown
@@ -43,19 +45,53 @@ def create_app(test_config=None):
         raise ValueError("SECRET_KEY environment variable must be set. "
                         "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\"")
     
+    # SECURITY: Set SESSION_COOKIE_SECURE based on whether we're behind HTTPS
+    # - Production (Cloudflare tunnel): X-Forwarded-Proto=https → secure cookies
+    # - Test/Dev (HTTP): Use non-secure cookies for session to work
+    #
+    # NOTE: We must defer this check because request context doesn't exist at app creation time.
+    # For TESTING mode, we default to False to avoid "Working outside of request context" errors.
+    # In production with gunicorn, this runs within request context via before_request.
+    if test_config and test_config.get("TESTING"):
+        is_https = False
+    else:
+        # Use a try/except to handle cases where this runs outside request context
+        try:
+            is_https = request.headers.get('X-Forwarded-Proto', '').lower() == 'https'
+        except RuntimeError:
+            # Outside request context (e.g., gunicorn preload)
+            is_https = os.getenv('X_FORWARDED_PROTO', 'http').lower() == 'https'
+    
+    app.config['SESSION_COOKIE_SECURE'] = is_https
+    
     app.config.from_mapping(
         SECRET_KEY=secret_key,
         SQLALCHEMY_DATABASE_URI="sqlite:///"
             + os.path.join(app.root_path, "reviewboard.db"),
         SQLALCHEMY_TRACK_MODIFICATIONS=False,
         PERMANENT_SESSION_LIFETIME=timedelta(days=7),
-        SESSION_COOKIE_SECURE=True,           # A05: Security Misconfiguration - Secure cookies
+        # SESSION_COOKIE_SECURE set above based on HTTPS detection
         SESSION_COOKIE_HTTPONLY=True,          # A05: HttpOnly flag prevents XSS cookie theft
         SESSION_COOKIE_SAMESITE='Lax',         # A05: CSRF protection via SameSite
         UPLOAD_FOLDER=os.path.join(app.root_path, "static", "uploads"),
         MAX_CONTENT_LENGTH=20 * 1024 * 1024,  # 20 MiB max upload
         WTF_CSRF_TIME_LIMIT=3600,              # 1 hour CSRF token lifetime
     )
+
+    # ⚠️ Validate Ollama endpoint configuration
+    ollama_endpoint = os.getenv('OLLAMA_ENDPOINT', '')
+    if ollama_endpoint:
+        if '/api/chat' in ollama_endpoint:
+            print("⚠️  ERROR: OLLAMA_ENDPOINT uses /api/chat which returns streaming NDJSON!")
+            print("⚠️  Please change to /v1/chat/completions (OpenAI-compatible)")
+            print(f"⚠️  Current: {ollama_endpoint}")
+            # Auto-fix by replacing
+            fixed_endpoint = ollama_endpoint.replace('/api/chat', '/v1/chat/completions')
+            os.environ['OLLAMA_ENDPOINT'] = fixed_endpoint
+            print(f"⚠️  Auto-fixed to: {fixed_endpoint}")
+        elif '/v1/chat/completions' not in ollama_endpoint:
+            print(f"⚠️  WARNING: OLLAMA_ENDPOINT may be incorrect: {ollama_endpoint}")
+            print("⚠️  Expected format: http://host:port/v1/chat/completions")
 
     # SAFETY: Force test database when TESTING flag is set AND no URI specified
     # This prevents tests from accidentally touching production data
@@ -175,13 +211,49 @@ def create_app(test_config=None):
         response.headers['Permissions-Policy'] = 'geolocation=(), microphone=(), camera=()'
         return response
 
+    # ── AI Review Service Logging ──
+    # Use root logger '' to capture all logging from child loggers like 'services.ai_reviewer'
+    # This ensures the debug messages from ai_reviewer.py appear in our log file
+    ai_logger = logging.getLogger('')  # Root logger to catch all
+    ai_logger.setLevel(logging.DEBUG)
+    
+    # Also set the 'ai_review' logger specifically (used by worker.py)
+    ai_review_logger = logging.getLogger('ai_review')
+    ai_review_logger.setLevel(logging.DEBUG)
+    
+    # Remove any existing handlers to avoid duplicates
+    ai_logger.handlers = []
+    
+    # Log to dedicated AI review log file
+    try:
+        ai_handler = RotatingFileHandler(
+            os.path.join(app.root_path, 'ai_review.log'),
+            maxBytes=10*1024*1024,  # 10MB
+            backupCount=5
+        )
+        ai_handler.setFormatter(logging.Formatter(
+            '[%(asctime)s] %(levelname)s [%(name)s] %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        ))
+        ai_handler.setLevel(logging.DEBUG)
+        ai_logger.addHandler(ai_handler)
+        ai_review_logger.addHandler(ai_handler)  # Also add to ai_review logger
+        print(f"✅ AI review logging to: {os.path.join(app.root_path, 'ai_review.log')}")
+    except Exception as e:
+        print(f"⚠️  Failed to create AI log file handler: {e}")
+    
+    # Also log to stderr for real-time monitoring
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(logging.Formatter(
+        '[%(asctime)s] %(levelname)s: %(message)s', datefmt='%H:%M:%S'
+    ))
+    ai_logger.addHandler(console_handler)
+    
     # ── Security Logging (A09: Security Logging) ──
-    import logging
     security_logger = logging.getLogger('security')
     security_logger.setLevel(logging.INFO)
     
     # Log to file
-    from logging.handlers import RotatingFileHandler
     try:
         handler = RotatingFileHandler(
             os.path.join(app.root_path, 'security.log'),
@@ -196,8 +268,30 @@ def create_app(test_config=None):
         pass  # Don't crash if logging fails
     
     @app.before_request
+    def update_last_seen():
+        """Update last_seen timestamp for authenticated users."""
+        from models import db, User
+        from flask_login import current_user
+        if current_user.is_authenticated:
+            from datetime import datetime, timezone
+            current_user.last_seen = datetime.now(timezone.utc)
+            db.session.commit()
+    
+    @app.before_request
     def log_security_event():
         """Log suspicious requests for security monitoring."""
+        # Get real client IP (handles Cloudflare Tunnel)
+        def get_real_client_ip():
+            cf_ip = request.headers.get('CF-Connecting-IP')
+            if cf_ip:
+                return cf_ip
+            x_forwarded = request.headers.get('X-Forwarded-For', '')
+            if x_forwarded:
+                return x_forwarded.split(',')[0].strip()
+            return request.remote_addr
+        
+        client_ip = get_real_client_ip()
+        
         # Log failed login attempts
         if request.endpoint == 'auth.login' and request.method == 'POST':
             # This is handled in the login route itself for access to form data
@@ -207,13 +301,13 @@ def create_app(test_config=None):
         if request.path.startswith('/admin'):
             security_logger.info(
                 f"Admin access: user={current_user.username if current_user.is_authenticated else 'anonymous'}, "
-                f"path={request.path}, method={request.method}, ip={request.remote_addr}"
+                f"path={request.path}, method={request.method}, ip={client_ip}"
             )
         
         # Log suspicious path traversal attempts
         if '..' in request.path or request.path.startswith('/uploads/../'):
             security_logger.warning(
-                f"Potential path traversal: path={request.path}, ip={request.remote_addr}"
+                f"Potential path traversal: path={request.path}, ip={client_ip}"
             )
 
     # Home → board or login

@@ -7,8 +7,8 @@ if [ -z "$SECRET_KEY" ]; then
     echo "Generated new SECRET_KEY"
 fi
 
-# Disable debug mode in production (set FLASK_DEBUG=false)
-export FLASK_DEBUG=false
+# Enable debug mode for auto-reload on code changes
+export FLASK_DEBUG=true
 
 source .venv/bin/activate
 nohup python app.py &

@@ -21,10 +21,14 @@ ai_review_bp = Blueprint('ai_review', __name__)
 
 
 def get_ollama_config():
-    """Get Ollama configuration from environment or settings."""
+    """Get Ollama configuration from environment or settings.
+    
+    IMPORTANT: Must use /v1/chat/completions endpoint (OpenAI-compatible).
+    The /api/chat endpoint returns streaming NDJSON which is incompatible.
+    """
     return {
-        'endpoint': os.getenv('OLLAMA_ENDPOINT', 'http://localhost:11434/api/generate'),
-        'model': os.getenv('OLLAMA_MODEL', 'qwen3:32b'),
+        'endpoint': os.getenv('OLLAMA_ENDPOINT', 'http://10.51.5.169:11434/v1/chat/completions'),
+        'model': os.getenv('OLLAMA_MODEL', 'gpt-oss:20b'),
         'timeout': int(os.getenv('OLLAMA_TIMEOUT', '120')),
         'max_retries': int(os.getenv('OLLAMA_MAX_RETRIES', '3')),
         'max_concurrent': int(os.getenv('OLLAMA_MAX_CONCURRENT', '10')),
@@ -36,10 +40,9 @@ def check_ollama_available():
     import requests
     config = get_ollama_config()
     try:
-        response = requests.get(
-            config['endpoint'].replace('/api/generate', '/api/tags'),
-            timeout=5
-        )
+        # Use /v1/models to check availability (OpenAI compat endpoint)
+        check_url = config['endpoint'].replace('/v1/chat/completions', '/v1/models')
+        response = requests.get(check_url, timeout=5)
         return response.status_code == 200
     except:
         return False
@@ -69,6 +72,10 @@ def start_ai_review(ticket_id):
     pdf_path = os.path.join(current_app.config['UPLOAD_FOLDER'], ticket.pdf_filename)
     if not os.path.exists(pdf_path):
         return jsonify({'error': 'PDF file not found'}), 404
+    
+    # Check authorization - only ticket owner or admin can start AI review
+    if ticket.owner_id != current_user.id and not current_user.is_admin:
+        return jsonify({'error': 'Only the ticket creator can start an AI review'}), 403
     
     # Check if there's already a pending/processing job
     existing_job = AIReviewJob.query.filter(

@@ -14,6 +14,26 @@ _login_attempts = {}  # {ip: [timestamp, timestamp, ...]}
 _MAX_ATTEMPTS = 5
 _LOCKOUT_DURATION = timedelta(minutes=5)
 
+
+def get_real_client_ip():
+    """Get real client IP, accounting for Cloudflare and other proxies.
+    
+    Cloudflare Tunnel passes the real IP via CF-Connecting-IP header.
+    X-Forwarded-For may contain multiple IPs (client, proxy1, proxy2).
+    """
+    # Cloudflare provides the real client IP
+    cf_ip = request.headers.get('CF-Connecting-IP')
+    if cf_ip:
+        return cf_ip
+    
+    # Fallback: First IP in X-Forwarded-For (client)
+    x_forwarded = request.headers.get('X-Forwarded-For', '')
+    if x_forwarded:
+        return x_forwarded.split(',')[0].strip()
+    
+    # Last resort: Direct connection IP
+    return request.remote_addr
+
 auth_bp = Blueprint("auth", __name__)
 
 
@@ -55,7 +75,8 @@ def login():
         return redirect(url_for("tickets.board"))
     
     # A04/A07: Rate limiting - check if IP is locked out
-    client_ip = request.remote_addr
+    # Use get_real_client_ip() to handle Cloudflare Tunnel (SSL offloading)
+    client_ip = get_real_client_ip()
     now = datetime.now()
     if client_ip in _login_attempts:
         # Clean old attempts outside lockout window

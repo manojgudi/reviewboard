@@ -20,6 +20,7 @@ class User(UserMixin, db.Model):
     # User preferences
     icon_color = db.Column(db.String(7), nullable=False, default="#0052CC")  # Hex color for avatar
     default_review_color = db.Column(db.String(20), nullable=False, default="yellow")  # Default highlight color
+    last_seen = db.Column(db.DateTime, nullable=True, default=None)  # Last activity timestamp
 
     tickets = db.relationship("Ticket", backref="owner", lazy="dynamic")
     reviews = db.relationship("Review", backref="author", lazy="dynamic")
@@ -27,6 +28,17 @@ class User(UserMixin, db.Model):
     @property
     def is_admin(self):
         return self.role == "admin"
+
+    @property
+    def is_online(self):
+        """Check if user was active within last 5 minutes."""
+        if not self.last_seen:
+            return False
+        from datetime import datetime, timezone, timedelta
+        now = datetime.now(timezone.utc)
+        if self.last_seen.tzinfo is None:
+            self.last_seen = self.last_seen.replace(tzinfo=timezone.utc)
+        return self.last_seen >= now - timedelta(minutes=5)
 
     def __repr__(self):
         return f"<User {self.username}>"
@@ -47,6 +59,7 @@ class Ticket(db.Model):
     created_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc),
                            onupdate=lambda: datetime.now(timezone.utc))
+    request_ai_review = db.Column(db.Boolean, nullable=False, default=False)  # User opted-in to AI review
 
     reviews = db.relationship("Review", backref="ticket", lazy="dynamic",
                               cascade="all, delete-orphan")
@@ -200,7 +213,8 @@ class AIReviewJob(db.Model):
     completed_at = db.Column(db.DateTime, nullable=True)
 
     # Relationships
-    ticket = db.relationship("Ticket", backref=db.backref("ai_review_jobs", lazy="dynamic"))
+    ticket = db.relationship("Ticket", backref=db.backref("ai_review_jobs", lazy="dynamic",
+                               cascade="all, delete-orphan"))
     user = db.relationship("User", backref=db.backref("ai_review_jobs", lazy="dynamic"))
 
     @property

@@ -1,0 +1,4 @@
+30 7 * * * /home/miniluv/.openclaw/workspace/v2x_paper_job.sh
+# Reviewboard incremental backup — twice daily
+0 6 * * * /home/miniluv/.picoclaw/workspace/reviewboard/backup.py >> /encrypted/backups/reviewboard/backup.log 2>&1
+0 18 * * * /home/miniluv/.picoclaw/workspace/reviewboard/backup.py >> /encrypted/backups/reviewboard/backup.log 2>&1

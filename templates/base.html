@@ -777,7 +777,8 @@
       <li><a href="{{ url_for('tickets.board') }}">Dashboard</a></li>
       <li><a href="{{ url_for('tickets.new_ticket') }}">New Ticket</a></li>
       {% if current_user.is_admin %}
-      <li><a href="{{ url_for('admin.users') }}">Admin</a></li>
+      <li><a href="{{ url_for('admin.users') }}">All Users</a></li>
+      <li><a href="{{ url_for('admin.online_users') }}">Online</a></li>
       {% endif %}
     </ul>
     {% endif %}

@@ -1,0 +1,123 @@
+{% extends 'base.html' %}
+{% block title %}Online Users – RB{% endblock %}
+{% block content %}
+<style>
+  @media (max-width: 768px) {
+    .table { font-size: 0.8rem; }
+    .table th, .table td { padding: 0.4rem; }
+  }
+  .status-dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+  }
+  .status-online { background-color: #28a745; box-shadow: 0 0 4px #28a745; }
+  .status-offline { background-color: #6c757d; }
+</style>
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+  <h2 class="mb-0">
+    <span class="status-dot status-online me-2"></span>
+    Online Users
+  </h2>
+  <a href="{{ url_for('admin.users') }}" class="btn btn-outline-secondary btn-sm">← All Users</a>
+</div>
+
+{# Summary cards #}
+<div class="row mb-4">
+  <div class="col-6 col-md-3">
+    <div class="card text-center">
+      <div class="card-body py-2">
+        <h3 class="mb-0 text-success">{{ online_count }}</h3>
+        <small class="text-muted">Online Now</small>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card text-center">
+      <div class="card-body py-2">
+        <h3 class="mb-0">{{ total_count - online_count }}</h3>
+        <small class="text-muted">Offline</small>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card text-center">
+      <div class="card-body py-2">
+        <h3 class="mb-0">{{ total_count }}</h3>
+        <small class="text-muted">Total Users</small>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# Online Users #}
+{% if online_users %}
+<h5 class="mb-3">Active (last 5 min)</h5>
+<table class="table table-hover mb-4">
+  <thead class="table-light">
+    <tr>
+      <th>User</th>
+      <th>Email</th>
+      <th>Role</th>
+      <th>Last Activity</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in online_users %}
+    <tr>
+      <td>
+        <span class="status-dot status-online me-2"></span>
+        {{ item.user.username }}
+      </td>
+      <td>{{ item.user.email }}</td>
+      <td>{{ item.user.role }}</td>
+      <td>
+        {% if item.minutes_ago == 'just now' %}
+          <span class="badge bg-success">Active now</span>
+        {% else %}
+          <span class="badge bg-success">{{ item.minutes_ago }} ago</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="alert alert-info">No users online right now.</div>
+{% endif %}
+
+{# Offline Users #}
+{% if offline_users %}
+<h5 class="mb-3">Offline</h5>
+<table class="table table-hover">
+  <thead class="table-light">
+    <tr>
+      <th>User</th>
+      <th>Email</th>
+      <th>Role</th>
+      <th>Last Seen</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in offline_users %}
+    <tr>
+      <td>
+        <span class="status-dot status-offline me-2"></span>
+        {{ item.user.username }}
+      </td>
+      <td>{{ item.user.email }}</td>
+      <td>{{ item.user.role }}</td>
+      <td>
+        {% if item.minutes_ago %}
+          {{ item.minutes_ago }}
+        {% else %}
+          <span class="text-muted">Never</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

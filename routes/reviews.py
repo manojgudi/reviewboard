@@ -156,19 +156,18 @@ def api_simplify_text():
                 'error': 'Text contains potentially unsafe content. Please try different text.'
             }), 400
     
-    # Call external AI API
-    ai_endpoint = 'https://artificiallyrewrite14513.caffeinelover.eu/v1/chat/completions'
+    # Call external AI API (local Ollama instance)
+    ai_endpoint = 'http://10.51.5.169:11434/v1/chat/completions'
     
     try:
         response = requests.post(
             ai_endpoint,
             json={
-                'cache_prompt': False,
-                'n_keep': 0,
+                'model': 'gpt-oss:20b',
                 'messages': [
                     {
                         'role': 'system',
-                        'content': 'Rewrite the text to improve clarity, precision, and formal academic tone. Preserve meaning. Preserve syntax if code. Do not add information.'
+                        'content': 'Rewrite the text to improve clarity, precision, and formal academic tone. Preserve meaning. Preserve syntax if code. Do not add information. Never return empty response.'
                     },
                     {
                         'role': 'user',
@@ -176,8 +175,7 @@ def api_simplify_text():
                     }
                 ],
                 'max_tokens': 200,
-                'temperature': 0.2,
-                'top_p': 0.9
+                'temperature': 0.2
             },
             timeout=SIMPLIFY_TIMEOUT,
             headers={'Content-Type': 'application/json'}
@@ -186,26 +184,38 @@ def api_simplify_text():
         if response.status_code != 200:
             return jsonify({
                 'success': False,
-                'error': 'AI service temporarily unavailable. Please try again.'
+                'error': f'AI service error: {response.status_code}'
             }), 503
         
-        result = response.json()
-        
-        # Extract simplified text from response
-        choices = result.get('choices', [])
-        if not choices:
+        try:
+            result = response.json()
+        except ValueError as e:
             return jsonify({
                 'success': False,
-                'error': 'Invalid response from AI service'
+                'error': 'AI returned invalid response'
             }), 502
         
-        simplified_text = choices[0].get('message', {}).get('content', '').strip()
+        # Extract simplified text from OpenAI-compatible API response
+        # Handle Ollama extended thinking models that put content in 'reasoning' field
+        message = result.get('choices', [{}])[0].get('message', {})
+        simplified_text = message.get('content', '').strip()
+        
+        # Fallback to reasoning field if content is empty (Ollama extended thinking)
+        if not simplified_text:
+            reasoning = message.get('reasoning', {}).get('summary', [''])[0] if isinstance(message.get('reasoning'), dict) else str(message.get('reasoning', ''))
+            # For Ollama, reasoning might be a plain string in the reasoning field
+            if not reasoning:
+                reasoning = str(message.get('reasoning', ''))
+            simplified_text = reasoning.strip() if reasoning else ''
         
         if not simplified_text:
+            # Log raw response for debugging
+            import logging
+            logging.warning(f"Empty AI response. Status: {response.status_code}, Body: {response.text[:500]}")
             return jsonify({
                 'success': False,
-                'error': 'AI returned empty response'
-            }), 502
+                'error': 'Malformed selection. Please select proper text again.'
+            }), 400
         
         return jsonify({
             'success': True,

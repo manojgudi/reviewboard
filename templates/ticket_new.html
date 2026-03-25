@@ -89,9 +89,20 @@
   </div>
   <div class="mb-3">
     <label class="form-label" for="pdf">PDF File (optional)</label>
-    <input type="file" class="form-control" id="pdf" name="pdf" accept="application/pdf">
+    <input type="file" class="form-control" id="pdf" name="pdf" accept="application/pdf" onchange="handlePdfUpload(this)">
+    <div id="pdf-info" class="form-text"></div>
   </div>
-  <button type="submit" class="btn btn-primary">Create Ticket</button>
+  
+  <div class="mb-3 form-check">
+    <input type="checkbox" class="form-check-input" id="request_ai_review" name="request_ai_review" disabled>
+    <label class="form-check-label" for="request_ai_review">
+      <strong>Request AI Review</strong><br>
+      <small class="text-muted">Automatically analyze the PDF section-by-section when the ticket is created (requires Ollama)</small>
+    </label>
+    <div id="ai-review-warning" class="form-text text-danger" style="display: none;"></div>
+  </div>
+  
+  <button type="submit" class="btn btn-primary" id="submit-btn">Create Ticket</button>
 </form>
 
 <!-- Past date confirmation modal -->
@@ -118,6 +129,78 @@
 
 <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
 <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/plugins/confirmDate/confirmDate.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+let currentPdfFile = null;
+
+async function handlePdfUpload(input) {
+    const pdfInfo = document.getElementById('pdf-info');
+    const aiReviewCheckbox = document.getElementById('request_ai_review');
+    const aiReviewWarning = document.getElementById('ai-review-warning');
+    
+    aiReviewWarning.style.display = 'none';
+    aiReviewWarning.textContent = '';
+    
+    if (!input.files || input.files.length === 0) {
+        pdfInfo.textContent = '';
+        aiReviewCheckbox.checked = false;
+        aiReviewCheckbox.disabled = true;
+        currentPdfFile = null;
+        return;
+    }
+    
+    const file = input.files[0];
+    
+    if (file.type !== 'application/pdf') {
+        pdfInfo.innerHTML = '<span class="text-danger">⚠️ Please select a PDF file</span>';
+        aiReviewCheckbox.checked = false;
+        aiReviewCheckbox.disabled = true;
+        currentPdfFile = null;
+        return;
+    }
+    
+    pdfInfo.textContent = 'Loading PDF...';
+    currentPdfFile = file;
+    
+    try {
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        const pageCount = pdf.numPages;
+        
+        pdfInfo.textContent = `📄 ${pageCount} page${pageCount !== 1 ? 's' : ''} detected`;
+        
+        if (pageCount > 10) {
+            aiReviewCheckbox.checked = false;
+            aiReviewCheckbox.disabled = true;
+            aiReviewWarning.textContent = '⚠️ AI review requires 10 pages or fewer. This PDF has ' + pageCount + ' pages.';
+            aiReviewWarning.style.display = 'block';
+        } else {
+            aiReviewCheckbox.disabled = false;
+        }
+    } catch (error) {
+        console.error('Error reading PDF:', error);
+        pdfInfo.innerHTML = '<span class="text-warning">⚠️ Could not read PDF (may be corrupted or password-protected)</span>';
+        aiReviewCheckbox.checked = false;
+        aiReviewCheckbox.disabled = true;
+        currentPdfFile = null;
+    }
+}
+
+// Form submission validation
+document.getElementById('ticket-form').addEventListener('submit', function(e) {
+    const aiReviewCheckbox = document.getElementById('request_ai_review');
+    const pdfInput = document.getElementById('pdf');
+    
+    // If AI review is requested but checkbox is disabled (too many pages)
+    if (aiReviewCheckbox.checked && aiReviewCheckbox.disabled) {
+        e.preventDefault();
+        alert('⚠️ Cannot submit ticket with AI review - PDF exceeds 10 page limit.\n\nPlease remove the PDF or disable AI review.');
+        return false;
+    }
+});
+</script>
 <script>
 document.addEventListener('DOMContentLoaded', function() {
   // Get current CET time for display
