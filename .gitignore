@@ -61,4 +61,4 @@ Thumbs.db
 instance/
 *.pot
 nohup.out
-gunicorn.pid
+*gunicorn.pid
