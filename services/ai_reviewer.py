@@ -43,31 +43,35 @@ SKIP_SECTIONS = [
     'supplementary information',
 ]
 
-# Review prompt template
-REVIEW_PROMPT_TEMPLATE = """You are a peer reviewer examining a scientific paper.
-Review ONLY this section and provide constructive feedback.
+# Review prompt template - MUST give specific, line-referenced feedback
+REVIEW_PROMPT_TEMPLATE = """You are a CRITICAL peer reviewer. Your feedback MUST be SPECIFIC and ACTIONABLE.
 
-Focus on:
-- Clarity and readability of scientific writing
-- Factual accuracy and logical consistency
-- Methodology soundness (if applicable)
-- Potential improvements
+ABSOLUTE RULES:
+- You MUST quote specific sentences/paragraphs from the text (use "..." around quotes)
+- You MUST cite line numbers or page references when possible
+- NEVER give generic feedback like "inconsistent formatting" or "missing citations" without specifying WHERE
+- NEVER say things like "clarify the setup" without explaining WHAT is unclear and WHY
+- If you find an issue, explain exactly what the problem is with a concrete example from the text
+- If you can't find a specific issue, say "No specific issues found - section appears sound"
+- Output ONLY the feedback, nothing else
 
-IMPORTANT - STRICT RULES:
-- Respond with DIRECT feedback ONLY, no preamble or explanation
-- Be concise: 2-3 sentences maximum
-- If no issues found, respond with exactly: "No issues found"
-- Do NOT include any thinking, reasoning, or analysis process in your response
-- Do NOT write things like "Let me analyze" or "Looking at this section" 
-- Do NOT claim to have internet access
-- Your response must be ONLY the feedback itself
+FORMAT: After any thinking, you MUST put your final feedback AFTER the word "FEEDBACK:" on its own line. The content field (after FEEDBACK:) is what gets shown to users. Example:
+FEEDBACK: Line 3: "the model was trained" is vague - what training data? hyperparameters? size?
+
+WRONG (generic):
+"The section has inconsistent formatting and unclear methodology"
+"Figure references need improvement"
+
+RIGHT (specific):
+"Line 3: 'the model was trained' is vague - what training data? hyperparameters? size?"
+"Paragraph 2: The acronym 'NLP' is used without first defining it"
 
 SECTION: {section_title}
 ---
 {sanitized_content}
 ---
 
-Your feedback:"""
+FEEDBACK:"""
 
 
 @dataclass
@@ -114,8 +118,15 @@ def chunk_pdf_by_sections(pdf_path: str, max_chunk_tokens: int = 2000) -> list[P
     """
     Extract text from PDF and chunk into sections based on headings.
     
-    Uses section-aware chunking: combines each heading with its associated
-    paragraphs to preserve document structure.
+    STRICT HEADING DETECTION - Only recognizes main section headings:
+    - Roman numerals at top level: "I. Introduction", "II. Methods"
+    - Arabic numerals at top level: "1. Introduction", "2. Methods"
+    - Known section titles: "Abstract", "Introduction", "Methods", etc.
+    - Markdown headers: "# Heading"
+    
+    Does NOT treat subsections (1.1, 1.2.3) as separate review sections.
+    Does NOT treat figure/table captions (TABLE 1, Figure 2) as sections.
+    Filters out References, Acknowledgments, Appendix.
     
     Args:
         pdf_path: Path to the PDF file
@@ -132,18 +143,145 @@ def chunk_pdf_by_sections(pdf_path: str, max_chunk_tokens: int = 2000) -> list[P
     
     sections = []
     
-    # Patterns for detecting headings (various formats)
-    heading_patterns = [
-        r'^(Abstract|Introduction|Background|Related Work|Methodology|Methods?|Experiment|Results?|Discussion|Limitations?|Conclusion|Future Work|References?|Acknowledgments?|Appendix)\s*$',
-        r'^(#+\s+.+)$',  # Markdown-style headers
-        r'^(\d+\.\s+[A-Z][^\n]+)$',  # Numbered sections like "1. Introduction"
-        r'^(\d+\.\d+\s+[^\n]+)$',  # Numbered subsections like "1.1 Background"
-    ]
+    # ============================================================
+    # STRICT HEADING DETECTION - Only top-level sections
+    # ============================================================
+    
+    # Roman numeral pattern: I, II, III, IV, V... XI, XII, etc.
+    # Uses non-capturing groups internally so outer groups work correctly
+    # Must have period after numeral AND be followed by space + title
+    ROMAN_NUMERAL = r'M{0,3}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3})\.'
+    
+    # Known main section titles (must be standalone, not as part of sentences)
+    MAIN_SECTION_TERMS = frozenset([
+        'abstract', 'introduction', 'background', 'related work', 'related studies',
+        'methodology', 'methods', 'method', 'experimental setup', 'experiments',
+        'experiment', 'results', 'discussion', 'findings',
+        'conclusion', 'conclusions', 'future work', 'limitations', 'threats to validity',
+        'case study', 'motivation', 'problem statement', 'contributions',
+        'results and discussion',  # Common combined section
+    ])
+    
+    # Terms that indicate non-content sections (skip these entirely)
+    SKIP_TERMS = frozenset([
+        'references', 'acknowledgments', 'acknowledgements', 'bibliography',
+        'appendix', 'appendices', 'supplementary materials', 'supplementary information'
+    ])
+    
+    def is_strict_heading(line: str) -> tuple[bool, str, bool]:
+        """
+        Check if a line is a STRICT main section heading.
+        
+        Returns:
+            (is_heading, normalized_title, should_skip)
+            - is_heading: True if this is a main section
+            - normalized_title: The title to use
+            - should_skip: True if this is References/Appendix (skip entirely)
+        """
+        line = line.strip()
+        
+        # Skip empty or very short/long lines
+        if len(line) < 3 or len(line) > 80:
+            return False, "", False
+        
+        # Pattern 1: Markdown headers (# Heading)
+        if line.startswith('#'):
+            title = line.lstrip('#').strip()
+            title_lower = title.lower()
+            if title_lower in SKIP_TERMS:
+                return True, title, True
+            return True, title, False
+        
+        # Pattern 2: Roman numeral headings: "I. Introduction", "XI. Conclusion"
+        # MUST have period AND space after numeral, followed by text
+        # Filters out subsection markers like "C. Some subsection"
+        roman_match = re.match(rf'^({ROMAN_NUMERAL})\s+(.+)$', line, re.IGNORECASE)
+        if roman_match:
+            numeral_str = roman_match.group(1)[:-1].upper()  # Remove trailing period
+            title = roman_match.group(2).strip()
+            title_lower = title.lower()
+            
+            # Single-letter Roman numerals that ARE valid main sections: I, V, X
+            # Single-letter Roman numerals that are likely subsection markers: C, D, L, M
+            main_section_singles = {'I', 'V', 'X'}
+            if len(numeral_str) == 1 and numeral_str not in main_section_singles:
+                # Likely a subsection marker like "C. Cooperative Awareness"
+                return False, "", False
+            
+            if title_lower in SKIP_TERMS:
+                return True, line, True
+            # Skip if title starts with a sentence word (likely a section reference, not a heading)
+            # Common patterns: "VII. However", "Section IV. The", "Table III. Shows", etc.
+            sentence_starters = {'however', 'moreover', 'furthermore', 'additionally', 'also', 
+                                'therefore', 'thus', 'hence', 'section', 'table', 'figure', 'fig',
+                                'chapter', 'appendix', 'references', 'the', 'a', 'an'}
+            # Strip punctuation from first word for matching
+            first_word_raw = title_lower.split()[0] if title_lower.split() else ''
+            first_word = re.sub(r'[^\w]', '', first_word_raw)  # Remove punctuation
+            if first_word in sentence_starters:
+                return False, "", False
+            # Accept if it's a known section term OR title is reasonably short (up to 10 words)
+            if title_lower in MAIN_SECTION_TERMS or len(title.split()) <= 10:
+                return True, title, False
+        
+        # Pattern 3: Arabic numeral headings: "1. Introduction", "2. Methods"
+        # Only TOP-LEVEL numbers (single digit or multi-digit, but no decimals)
+        # Must be: number + period + space + title
+        # Filters out: reference numbers like "60000. Using...", "RFC 1234", etc.
+        arabic_match = re.match(r'^(\d+)\.\s+(.+)$', line)
+        if arabic_match:
+            num = int(arabic_match.group(1))
+            title = arabic_match.group(2).strip()
+            title_lower = title.lower()
+            
+            # Skip large numbers (likely bibliography references)
+            if num > 100:
+                return False, "", False
+            
+            if title_lower in SKIP_TERMS:
+                return True, line, True
+            # Skip sentence references like "1. However", "2. The"
+            first_word_raw = title_lower.split()[0] if title_lower.split() else ''
+            first_word = re.sub(r'[^\w]', '', first_word_raw)  # Remove punctuation
+            if first_word in {'however', 'moreover', 'furthermore', 'additionally', 'also', 
+                             'therefore', 'thus', 'hence', 'section', 'table', 'figure', 'fig',
+                             'chapter', 'the', 'a', 'an'}:
+                return False, "", False
+            # Accept if it's a known section term OR title is reasonably short (up to 10 words)
+            if title_lower in MAIN_SECTION_TERMS or len(title.split()) <= 10:
+                return True, title, False
+        
+        # Pattern 4: Known section terms at start of line (no number prefix)
+        # Must appear at start of line and be followed by space/punctuation
+        # Handles "Abstract—The", "Abstract:", or just "Abstract"
+        # Does NOT match: "methods over CORECONF" (full sentence starting with 'methods')
+        line_lower = line.lower()
+        for term in MAIN_SECTION_TERMS:
+            if line_lower.startswith(term):
+                rest = line_lower[len(term):]
+                # If the line is just the term, accept it
+                if not rest or rest.isspace():
+                    return True, term.capitalize(), False
+                # If followed by space+punctuation+text (like "Abstract—The"), accept it
+                # but NOT if followed by a lowercase word (which would be a sentence)
+                if rest and rest[0] in ' —:-–—' and len(rest) > 1:
+                    # Check the ORIGINAL case (not lowercased) of what follows
+                    original_rest = line[len(term):]
+                    following = original_rest[1:].lstrip() if len(original_rest) > 1 else ''
+                    # Accept if following text starts with uppercase (like "The" in "Abstract—The")
+                    # or if it starts with punctuation
+                    if following and (following[0].isupper() or following[0] in '—:-'):
+                        return True, term.capitalize(), False
+        if line_lower in SKIP_TERMS:
+            return True, line, True
+        
+        return False, "", False
     
     current_title = "Introduction"
     current_content = []
     current_page_start = 1
     section_index = 0
+    in_skip_section = False  # Track if we're in References/Appendix
     
     for page_num in range(len(doc)):
         page = doc[page_num]
@@ -159,17 +297,31 @@ def chunk_pdf_by_sections(pdf_path: str, max_chunk_tokens: int = 2000) -> list[P
             if not line:
                 continue
                 
-            is_heading = False
-            matched_title = None
+            is_heading, matched_title, should_skip = is_strict_heading(line)
             
-            # Check if line is a heading
-            for pattern in heading_patterns:
-                if re.match(pattern, line, re.IGNORECASE | re.MULTILINE):
-                    is_heading = True
-                    matched_title = line.strip('#').strip()
-                    break
+            # If we hit a skip section (References, Appendix), stop adding content
+            if should_skip:
+                # First save the previous section if it has content
+                if current_content:
+                    content_text = '\n'.join(current_content)
+                    if content_text.strip():
+                        content_hash = hashlib.sha256(content_text.encode()).hexdigest()[:16]
+                        sections.append(PDFSection(
+                            index=section_index,
+                            title=current_title,
+                            content=content_text,
+                            content_hash=content_hash,
+                            page_start=current_page_start,
+                            page_end=page_num + 1
+                        ))
+                        section_index += 1
+                
+                # Now mark that we're in skip section mode
+                in_skip_section = True
+                current_content = []
+                continue
             
-            # If we hit a new section and have content
+            # If we hit a new section heading
             if is_heading and (current_content or section_index == 0):
                 # Save previous section
                 content_text = '\n'.join(current_content)
@@ -189,7 +341,9 @@ def chunk_pdf_by_sections(pdf_path: str, max_chunk_tokens: int = 2000) -> list[P
                 current_title = matched_title or line
                 current_content = []
                 current_page_start = page_num + 1
-            else:
+                in_skip_section = False
+            elif not in_skip_section:
+                # Only add content if we're not in a skip section
                 current_content.append(line)
     
     # Don't forget the last section
@@ -215,7 +369,11 @@ def chunk_pdf_by_sections(pdf_path: str, max_chunk_tokens: int = 2000) -> list[P
     if not sections:
         logger.warning(f"[PDF WARNING] No sections extracted from PDF: {pdf_path} (file may be scanned or contain no extractable text)")
     
+    # Log detected sections for debugging
+    section_titles = [s.title for s in sections]
     logger.info(f"[PDF INFO] Chunked PDF into {len(sections)} sections: {pdf_path}")
+    logger.debug(f"[PDF DEBUG] Detected sections: {section_titles}")
+    
     return sections
 
 
@@ -290,6 +448,68 @@ def _chunk_by_pages(pdf_path: str, max_chunk_tokens: int = 2000) -> list[PDFSect
     
     logger.info(f"[PDF INFO] Chunked PDF by pages into {len(sections)} sections: {pdf_path}")
     return sections
+
+
+def extract_feedback_from_reasoning(reasoning: str) -> str:
+    """
+    Extract just the feedback sentence from a reasoning/thinking string.
+    
+    The model often puts its thinking process in 'reasoning' followed by
+    the actual feedback sentence. This function tries to extract just
+    the feedback part.
+    
+    Looks for patterns like:
+    - "So we can say: "feedback""
+    - "Let's craft: "feedback""
+    - Final sentence that looks like feedback
+    """
+    if not reasoning:
+        return ""
+    
+    # Try to find feedback after common intro phrases
+    intro_patterns = [
+        r"FEEDBACK[:\s]+([^\n]+)",   # Explicit FEEDBACK: marker (highest priority)
+        r"So we can say[:\s]+([^\n]+)",
+        r"Let's craft[:\s]+([^\n]+)",
+        r"So[:\s]+([^\n]+)",
+        r"Thus[:\s]+([^\n]+)",
+        r"Therefore[:\s]+([^\n]+)",
+        r"Probably[:\s]+([^\n]+)",
+        r"We can say[:\s]+([^\n]+)",
+        r"So feedback[:\s]+([^\n]+)",  # Handle "So feedback: ..." style
+    ]
+    
+    for pattern in intro_patterns:
+        import re
+        match = re.search(pattern, reasoning, re.IGNORECASE)
+        if match:
+            candidate = match.group(1).strip()
+            # Make sure it's a reasonable length (not too long)
+            if len(candidate) < 200:
+                return candidate
+    
+    # If no intro pattern found, take the last sentence if it's short enough
+    sentences = reasoning.split('.')
+    if sentences:
+        last = sentences[-1].strip()
+        if len(last) < 150 and len(last) > 10:
+            return last
+        # If the last sentence is too long (thinking is cut off mid-sentence),
+        # try to find the last sentence that's reasonably short and has feedback keywords
+        feedback_keywords = ['issue', 'typo', 'error', 'missing', 'suggest', 'should', 'consider',
+                           'unclear', 'vague', 'inconsistent', 'problem', 'recommend', 'concern',
+                           'minor', 'format', 'incomplete', 'incorrect', 'fix', 'clarify']
+        for sent in reversed(sentences[:-1]):
+            sent = sent.strip()
+            if 20 < len(sent) < 150:
+                # Check if it looks like feedback (contains feedback keywords or specific terms)
+                lower = sent.lower()
+                if any(kw in lower for kw in feedback_keywords):
+                    return sent
+
+    # Otherwise, return the whole reasoning (better than nothing)
+    # Increase limit to 1500 to avoid cutting mid-sentence in truncated responses
+    return reasoning[:1500]
 
 
 def sanitize_llm_response(text: str) -> str:
@@ -385,7 +605,8 @@ def call_ollama(section: PDFSection, endpoint: str = None, model: str = None,
     max_retries = max_retries or OLLAMA_MAX_RETRIES
     
     # Sanitize content: remove LaTeX hyphens and PDF artifacts
-    sanitized_content = sanitize_pdf_text(section.content[:4000])
+    # Allow more content for better context (increased from 4000)
+    sanitized_content = sanitize_pdf_text(section.content[:8000])
     
     prompt = REVIEW_PROMPT_TEMPLATE.format(
         section_title=section.title,
@@ -402,9 +623,10 @@ def call_ollama(section: PDFSection, endpoint: str = None, model: str = None,
         "messages": [
             {"role": "user", "content": prompt}
         ],
-        "max_tokens": 500,
+        "max_tokens": 1024,  # Increased to allow both thinking + feedback content
         "temperature": 0.3,
-        "stream": False  # Must be explicitly False to get single JSON response
+        "stream": False,  # Must be explicitly False to get single JSON response
+        "think": False,  # Disable extended thinking to get direct response
     }
     
     for attempt in range(max_retries):
@@ -448,11 +670,22 @@ def call_ollama(section: PDFSection, endpoint: str = None, model: str = None,
                     message = choices[0].get("message", {})
                     review_text = message.get("content", "").strip()
                     # Also check for Ollama extended thinking in reasoning field
+                    # The reasoning field may contain the actual feedback
                     if not review_text:
-                        reasoning = message.get("reasoning", {})
-                        if isinstance(reasoning, dict):
-                            reasoning = reasoning.get("summary", [""])[0] if reasoning.get("summary") else ""
-                        review_text = str(reasoning).strip()
+                        reasoning = message.get("reasoning")
+                        if reasoning:
+                            # Reasoning might be a string or dict (with summary array)
+                            if isinstance(reasoning, str):
+                                review_text = extract_feedback_from_reasoning(reasoning)
+                            elif isinstance(reasoning, dict):
+                                # Try summary array first, then the whole dict
+                                summary = reasoning.get("summary")
+                                if isinstance(summary, list) and summary:
+                                    review_text = extract_feedback_from_reasoning(str(summary[0]))
+                                elif isinstance(summary, str):
+                                    review_text = extract_feedback_from_reasoning(summary)
+                                else:
+                                    review_text = extract_feedback_from_reasoning(str(reasoning))
                 
                 # Fallback to Ollama native format
                 if not review_text:
@@ -462,7 +695,20 @@ def call_ollama(section: PDFSection, endpoint: str = None, model: str = None,
                     if not review_text:
                         thinking = ollama_message.get("thinking")
                         if thinking:
-                            review_text = str(thinking).strip()
+                            review_text = extract_feedback_from_reasoning(str(thinking))
+                
+                # If still no content, check if reasoning is at top level
+                if not review_text:
+                    top_reasoning = result.get("reasoning")
+                    if top_reasoning:
+                        if isinstance(top_reasoning, str):
+                            review_text = extract_feedback_from_reasoning(top_reasoning)
+                        elif isinstance(top_reasoning, dict):
+                            summary = top_reasoning.get("summary")
+                            if isinstance(summary, list) and summary:
+                                review_text = extract_feedback_from_reasoning(str(summary[0]))
+                            elif isinstance(summary, str):
+                                review_text = extract_feedback_from_reasoning(summary)
                 
                 if review_text:
                     # Sanitize before returning
@@ -538,26 +784,38 @@ def call_ollama(section: PDFSection, endpoint: str = None, model: str = None,
 
 def filter_trivial_sections(sections: list[PDFSection]) -> list[PDFSection]:
     """
-    Filter out trivial sections that LLMs commonly give false positives on
-    or that don't contain meaningful content to review.
+    Filter out ONLY truly trivial sections that can't be meaningfully reviewed.
+    
+    Philosophy: Be permissive. We'd rather review a boring section than miss
+    a meaningful one. The LLM can handle content that doesn't need review.
+    
+    Only filters:
+    - Empty or near-empty sections
+    - Sections that are just "References" with no content
+    - Pure bibliography/appendix content
     """
+    # Sections that should NEVER be reviewed (pure metadata)
+    NEVER_REVIEW = frozenset([
+        'references', 'bibliography', 'acknowledgments', 'acknowledgements',
+        'appendix', 'appendices', 'supplementary materials', 'supplementary information'
+    ])
+    
+    # Minimum content threshold (very permissive)
+    MIN_CONTENT_CHARS = 50
+    
     filtered = []
     for section in sections:
         title_lower = section.title.lower().strip()
+        content = section.content.strip()
         
-        # Skip known trivial sections
-        if title_lower in SKIP_SECTIONS:
-            logger.info(f"[SECTION FILTER] Skipping trivial section: '{section.title}'")
+        # Skip if title is in the never-review list AND content is minimal
+        if title_lower in NEVER_REVIEW and len(content) < MIN_CONTENT_CHARS:
+            logger.info(f"[SECTION FILTER] Skipping trivial section: '{section.title}' ({len(content)} chars)")
             continue
         
-        # Skip sections with very little content (likely just a heading)
-        if len(section.content.strip()) < 100:
-            logger.info(f"[SECTION FILTER] Skipping short section: '{section.title}' ({len(section.content)} chars)")
-            continue
-        
-        # Skip "References" appearing anywhere in title
-        if 'references' in title_lower:
-            logger.info(f"[SECTION FILTER] Skipping section with 'references': '{section.title}'")
+        # Skip completely empty sections
+        if len(content) < 10:
+            logger.info(f"[SECTION FILTER] Skipping empty section: '{section.title}' ({len(content)} chars)")
             continue
         
         filtered.append(section)

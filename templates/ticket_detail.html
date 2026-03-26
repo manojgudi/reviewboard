@@ -516,6 +516,9 @@
           <button type="button" class="btn btn-sm ai-review-btn" id="ai-review-btn" onclick="startAiReview()">
             🚀 Start AI Review
           </button>
+          <button type="button" class="btn btn-sm btn-outline-light" id="ai-reset-btn" onclick="resetAiReview()" style="display:none;">
+            🔄 Reset
+          </button>
         </div>
       </div>
       <div id="ai-review-progress" class="mt-2" style="display:none;">
@@ -1380,12 +1383,15 @@
     const progressBar = document.getElementById('ai-progress-bar');
     const progressText = document.getElementById('ai-progress-text');
     const btn = document.getElementById('ai-review-btn');
+    const resetBtn = document.getElementById('ai-reset-btn');
     
     if (data.status === 'not_started' || data.status === 'no_job') {
       statusText.textContent = 'Not started';
       progressDiv.style.display = 'none';
       btn.disabled = false;
       btn.innerHTML = '🚀 Start AI Review';
+      btn.onclick = startAiReview;
+      resetBtn.style.display = 'none';
       stopPolling();
     } else if (data.status === 'queued') {
       statusText.textContent = 'Queued...';
@@ -1394,6 +1400,7 @@
       progressText.textContent = 'Waiting in queue';
       btn.disabled = true;
       btn.innerHTML = '⏳ Queued...';
+      resetBtn.style.display = 'inline-block';
       startPolling();
     } else if (data.status === 'processing') {
       statusText.textContent = `Processing: ${data.completed_sections}/${data.total_sections} sections`;
@@ -1402,6 +1409,7 @@
       progressText.textContent = data.progress_percent + '%';
       btn.disabled = true;
       btn.innerHTML = '⚙️ Processing...';
+      resetBtn.style.display = 'inline-block';
       startPolling();
     } else if (data.status === 'completed') {
       statusText.textContent = '✅ Review complete! Refresh to see AI comments.';
@@ -1416,6 +1424,7 @@
       btn.disabled = false;
       btn.innerHTML = '🔄 Refresh';
       btn.onclick = () => location.reload();
+      resetBtn.style.display = 'inline-block';
       stopPolling();
     } else if (data.status === 'failed') {
       statusText.textContent = '❌ Failed: ' + (data.error_message || 'Unknown error');
@@ -1425,6 +1434,20 @@
       btn.disabled = false;
       btn.innerHTML = '🔄 Retry';
       btn.onclick = startAiReview;
+      resetBtn.style.display = 'inline-block';
+      stopPolling();
+    } else if (data.status === 'partial') {
+      statusText.textContent = `⚠️ Partial: ${data.completed_sections}/${data.total_sections} sections`;
+      statusText.style.color = '#ffe0e0';
+      progressDiv.style.display = 'block';
+      progressBar.style.width = data.progress_percent + '%';
+      progressBar.classList.remove('bg-success');
+      progressBar.classList.add('bg-warning');
+      progressText.textContent = data.progress_percent + '%';
+      btn.disabled = false;
+      btn.innerHTML = '🔄 Refresh';
+      btn.onclick = () => location.reload();
+      resetBtn.style.display = 'inline-block';
       stopPolling();
     }
   }
@@ -1481,6 +1504,46 @@
       statusText.textContent = '❌ Network error';
       btn.disabled = false;
       btn.innerHTML = '🔄 Retry';
+    });
+  }
+  
+  function resetAiReview() {
+    if (!confirm('🔄 Reset AI Review?\n\nThis will delete:\n• All AI review jobs\n• All AI review sections\n• All AI-generated comments (🤖)\n\nThis cannot be undone!')) {
+      return;
+    }
+    
+    const ticketId = {{ ticket.id }};
+    const btn = document.getElementById('ai-reset-btn');
+    const statusText = document.getElementById('ai-review-status-text');
+    
+    btn.disabled = true;
+    btn.innerHTML = '⏳ Resetting...';
+    statusText.textContent = 'Resetting...';
+    
+    fetch(`/api/ai-review/${ticketId}/reset`, {
+      method: 'POST',
+      headers: {
+        'X-Requested-With': 'XMLHttpRequest',
+        'X-CSRFToken': document.querySelector('input[name="csrf_token"]').value
+      }
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        alert('✅ Reset complete!\n\n' + data.message);
+        location.reload();
+      } else {
+        alert('❌ Reset failed: ' + (data.error || 'Unknown error'));
+        btn.disabled = false;
+        btn.innerHTML = '🔄 Reset';
+        checkAiReviewStatus();
+      }
+    })
+    .catch(err => {
+      console.error('Failed to reset AI review:', err);
+      alert('❌ Network error during reset');
+      btn.disabled = false;
+      btn.innerHTML = '🔄 Reset';
     });
   }
   

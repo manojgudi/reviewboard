@@ -165,6 +165,180 @@ def delete_user(user_id):
 # AI Review Management Routes
 # =============================================================================
 
+@admin_bp.route('/ai-review')
+@login_required
+@admin_required
+def ai_review_panel():
+    """
+    Admin panel for managing AI reviews across all tickets.
+    
+    Shows tickets with AI review activity (jobs or AI-generated reviews).
+    Allows bulk reset of AI review state.
+    """
+    # Get tickets with any AI review activity
+    # 1. Tickets with AIReviewJob records
+    tickets_with_jobs = db.session.query(Ticket.id).join(AIReviewJob).distinct().subquery()
+    
+    # 2. Tickets with AI-generated reviews (marked with 🤖)
+    tickets_with_ai_reviews = db.session.query(Review.ticket_id).filter(
+        Review.body.like('%🤖 AI Review%')
+    ).distinct().subquery()
+    
+    # Combine and get full ticket info
+    from sqlalchemy import union_all
+    from sqlalchemy.orm import aliased
+    
+    # Get all tickets that have AI review activity
+    ai_tickets = Ticket.query.filter(
+        Ticket.id.in_(db.session.query(tickets_with_jobs))
+    ).all()
+    
+    ai_tickets_2 = Ticket.query.filter(
+        Ticket.id.in_(db.session.query(tickets_with_ai_reviews))
+    ).all()
+    
+    # Combine and deduplicate
+    ticket_ids_seen = set()
+    all_ai_tickets = []
+    for t in ai_tickets + ai_tickets_2:
+        if t.id not in ticket_ids_seen:
+            ticket_ids_seen.add(t.id)
+            all_ai_tickets.append(t)
+    
+    # Sort by most recent activity
+    all_ai_tickets.sort(key=lambda t: t.updated_at, reverse=True)
+    
+    # Get stats for each ticket
+    ticket_stats = []
+    for ticket in all_ai_tickets:
+        jobs = AIReviewJob.query.filter_by(ticket_id=ticket.id).all()
+        ai_reviews = Review.query.filter(
+            Review.ticket_id == ticket.id,
+            Review.body.like('%🤖 AI Review%')
+        ).count()
+        
+        # Find latest job
+        latest_job = AIReviewJob.query.filter_by(ticket_id=ticket.id).order_by(
+            AIReviewJob.created_at.desc()
+        ).first()
+        
+        ticket_stats.append({
+            'ticket': ticket,
+            'job_count': len(jobs),
+            'ai_review_count': ai_reviews,
+            'latest_job': latest_job,
+            'status': latest_job.status if latest_job else 'none',
+            'progress': latest_job.progress_percent if latest_job else 0,
+        })
+    
+    return render_template('admin/ai_review_panel.html', ticket_stats=ticket_stats)
+
+
+@admin_bp.route('/ai-review/bulk-reset', methods=['POST'])
+@login_required
+@admin_required
+def bulk_reset_ai_review():
+    """
+    Bulk reset AI review state for multiple tickets.
+    
+    Query params:
+        - ids: comma-separated list of ticket IDs
+        - delete_reviews: 1 to also delete AI-generated reviews
+    
+    Returns:
+        JSON with reset details
+    """
+    import json
+    
+    # Get ticket IDs from form or query
+    ids_str = request.form.get('ids', request.args.get('ids', ''))
+    delete_reviews = request.form.get('delete_reviews', '0') == '1'
+    
+    if not ids_str:
+        return jsonify({'error': 'No ticket IDs provided'}), 400
+    
+    try:
+        ticket_ids = [int(id.strip()) for id in ids_str.split(',')]
+    except ValueError:
+        return jsonify({'error': 'Invalid ticket ID format'}), 400
+    
+    reset_results = {
+        'processed': [],
+        'errors': [],
+        'total_deleted_jobs': 0,
+        'total_deleted_sections': 0,
+        'total_deleted_reviews': 0,
+    }
+    
+    for ticket_id in ticket_ids:
+        ticket = db.session.get(Ticket, ticket_id)
+        if not ticket:
+            reset_results['errors'].append({
+                'ticket_id': ticket_id,
+                'error': 'Ticket not found'
+            })
+            continue
+        
+        result = {
+            'ticket_id': ticket_id,
+            'ticket_title': ticket.title,
+            'deleted_jobs': 0,
+            'deleted_sections': 0,
+            'deleted_reviews': 0,
+            'rq_jobs_cancelled': [],
+        }
+        
+        # 1. Cancel any RQ jobs in Redis
+        jobs = AIReviewJob.query.filter_by(ticket_id=ticket_id).all()
+        for job in jobs:
+            if job.job_id:
+                try:
+                    from worker import redis_conn
+                    rq_key = f"rq:job:{job.job_id}"
+                    if redis_conn.exists(rq_key):
+                        redis_conn.delete(rq_key)
+                        result['rq_jobs_cancelled'].append(job.job_id)
+                except Exception as e:
+                    current_app.logger.warning(f"Could not cancel RQ job {job.job_id}: {e}")
+            
+            # Count and delete sections
+            sections = AIReviewSection.query.filter_by(job_id=job.id).all()
+            result['deleted_sections'] += len(sections)
+            for section in sections:
+                db.session.delete(section)
+            
+            # Delete job
+            db.session.delete(job)
+            result['deleted_jobs'] += 1
+        
+        # 2. Optionally delete AI-generated review comments
+        if delete_reviews:
+            ai_reviews = Review.query.filter(
+                Review.ticket_id == ticket_id,
+                Review.body.like('%🤖 AI Review%')
+            ).all()
+            result['deleted_reviews'] = len(ai_reviews)
+            for review in ai_reviews:
+                db.session.delete(review)
+            
+            # Reset ticket status to open (was in_review due to AI)
+            if ticket.status == 'in_review':
+                ticket.status = 'open'
+        
+        # Reset request_ai_review flag
+        ticket.request_ai_review = False
+        
+        db.session.commit()
+        
+        # Update totals
+        reset_results['total_deleted_jobs'] += result['deleted_jobs']
+        reset_results['total_deleted_sections'] += result['deleted_sections']
+        reset_results['total_deleted_reviews'] += result['deleted_reviews']
+        reset_results['processed'].append(result)
+    
+    return jsonify(reset_results), 200
+
+
 @admin_bp.route('/ai-review/<int:ticket_id>/reset', methods=['POST'])
 @login_required
 @admin_required
@@ -434,7 +608,7 @@ def online_users():
     for user in all_users:
         is_online = False
         if user.last_seen:
-            # Ensure timezone-aware comparison
+            # Ensure timezone-aware comparison (don't mutate user.last_seen!)
             last_seen = user.last_seen
             if last_seen.tzinfo is None:
                 last_seen = last_seen.replace(tzinfo=timezone.utc)

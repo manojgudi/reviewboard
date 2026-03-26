@@ -93,42 +93,24 @@ def start_ai_review(ticket_id):
     # Check if Ollama is configured and available
     config = get_ollama_config()
     
-    # Import here to avoid circular imports
-    from services.ai_reviewer import chunk_pdf_by_sections, process_pdf_sections
+    # Create job record first (total_sections will be set by worker)
+    job = AIReviewJob(
+        ticket_id=ticket_id,
+        user_id=current_user.id,
+        status='queued',
+        total_sections=0,  # Will be updated by worker when it chunks the PDF
+        completed_sections=0
+    )
+    db.session.add(job)
+    db.session.commit()
     
+    # Queue the job for background processing
     try:
-        # Chunk the PDF
-        sections = chunk_pdf_by_sections(pdf_path)
-        
-        if not sections:
-            return jsonify({'error': 'Could not extract text from PDF'}), 400
-        
-        # Create job record
-        job = AIReviewJob(
-            ticket_id=ticket_id,
-            user_id=current_user.id,
-            status='queued',
-            total_sections=len(sections),
-            completed_sections=0
-        )
-        db.session.add(job)
+        from worker import queue_ai_review_job
+        rq_job = queue_ai_review_job(job.id)
+        job.job_id = rq_job.id
+        job.status = 'processing'
         db.session.commit()
-        
-        # Queue the job for background processing
-        try:
-            from worker import queue_ai_review_job
-            rq_job = queue_ai_review_job(job.id)
-            job.job_id = rq_job.id
-            job.status = 'processing'
-            db.session.commit()
-        except Exception as e:
-            # If Redis/RQ not available, process synchronously
-            logger.warning(f"RQ not available, processing synchronously: {e}")
-            job.status = 'processing'
-            db.session.commit()
-            
-            # Process directly (blocking, but works)
-            _process_job_sync(job.id, sections, config, pdf_path)
         
         return jsonify({
             'job_id': job.id,
@@ -138,15 +120,20 @@ def start_ai_review(ticket_id):
         }), 202
         
     except Exception as e:
-        logger.error(f"Failed to start AI review for ticket {ticket_id}: {e}")
-        return jsonify({'error': str(e)}), 500
+        # If Redis/RQ not available, process synchronously
+        logger.warning(f"RQ not available, processing synchronously: {e}")
+        job.status = 'processing'
+        db.session.commit()
+        
+        # Process directly (blocking, but works)
+        _process_job_sync(job.id, config, pdf_path)
 
 
-def _process_job_sync(job_id: int, sections, config, pdf_path):
+def _process_job_sync(job_id: int, config, pdf_path):
     """
     Process AI review job synchronously (fallback when Redis not available).
     """
-    from services.ai_reviewer import process_pdf_sections
+    from services.ai_reviewer import chunk_pdf_by_sections, process_pdf_sections
     
     job = db.session.get(AIReviewJob, job_id)
     if not job:
@@ -156,6 +143,19 @@ def _process_job_sync(job_id: int, sections, config, pdf_path):
     db.session.commit()
     
     try:
+        # Chunk the PDF (same as worker does)
+        sections = chunk_pdf_by_sections(pdf_path)
+        
+        if not sections:
+            job.status = 'failed'
+            job.error_message = 'Could not extract text from PDF'
+            db.session.commit()
+            return
+        
+        # Update job with correct section count
+        job.total_sections = len(sections)
+        db.session.commit()
+        
         results = process_pdf_sections(
             sections,
             job_id=job.job_id
@@ -300,6 +300,74 @@ def cancel_ai_review(ticket_id):
     db.session.commit()
     
     return jsonify({'message': 'Job cancelled'}), 200
+
+
+@ai_review_bp.route("/api/ai-review/<int:ticket_id>/reset", methods=["POST"])
+@login_required
+def reset_ai_review(ticket_id):
+    """
+    Reset AI review state for a ticket.
+    
+    This deletes:
+    - All AIReviewJob records for this ticket
+    - All AIReviewSection records
+    - All AI-generated reviews (marked with 🤖)
+    
+    Then resets ticket status to 'open' if it was 'in_review'.
+    
+    Only ticket owner or admin can reset.
+    """
+    ticket = db.session.get(Ticket, ticket_id)
+    if not ticket:
+        return jsonify({'error': 'Ticket not found'}), 404
+    
+    # Check authorization
+    if ticket.owner_id != current_user.id and not current_user.is_admin:
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    results = {
+        'deleted_jobs': 0,
+        'deleted_sections': 0,
+        'deleted_reviews': 0,
+        'status_reset': False
+    }
+    
+    # 1. Get all jobs for this ticket
+    jobs = AIReviewJob.query.filter_by(ticket_id=ticket_id).all()
+    results['deleted_jobs'] = len(jobs)
+    
+    # 2. Delete sections for each job
+    for job in jobs:
+        sections = AIReviewSection.query.filter_by(job_id=job.id).all()
+        results['deleted_sections'] += len(sections)
+        for section in sections:
+            db.session.delete(section)
+        db.session.delete(job)
+    
+    # 3. Delete AI-generated reviews (marked with 🤖)
+    ai_reviews = Review.query.filter(
+        Review.ticket_id == ticket_id,
+        Review.body.like('%🤖 AI Review%')
+    ).all()
+    results['deleted_reviews'] = len(ai_reviews)
+    for review in ai_reviews:
+        db.session.delete(review)
+    
+    # 4. Reset ticket status if it was in_review
+    if ticket.status == 'in_review':
+        ticket.status = 'open'
+        results['status_reset'] = True
+    
+    # 5. Reset request_ai_review flag
+    ticket.request_ai_review = False
+    
+    db.session.commit()
+    
+    return jsonify({
+        'success': True,
+        'message': f'Reset complete. Deleted {results["deleted_jobs"]} jobs, {results["deleted_sections"]} sections, {results["deleted_reviews"]} reviews.',
+        'details': results
+    }), 200
 
 
 @ai_review_bp.route("/api/ai-review/config", methods=["GET"])

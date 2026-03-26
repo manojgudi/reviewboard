@@ -36,9 +36,10 @@ class User(UserMixin, db.Model):
             return False
         from datetime import datetime, timezone, timedelta
         now = datetime.now(timezone.utc)
-        if self.last_seen.tzinfo is None:
-            self.last_seen = self.last_seen.replace(tzinfo=timezone.utc)
-        return self.last_seen >= now - timedelta(minutes=5)
+        last_seen = self.last_seen
+        if last_seen.tzinfo is None:
+            last_seen = last_seen.replace(tzinfo=timezone.utc)
+        return last_seen >= now - timedelta(minutes=5)
 
     def __repr__(self):
         return f"<User {self.username}>"

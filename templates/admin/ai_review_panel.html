@@ -1,0 +1,232 @@
+{% extends 'base.html' %}
+{% block title %}AI Review Management – RB{% endblock %}
+{% block content %}
+<style>
+  .ai-review-panel {
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  .ticket-card {
+    transition: box-shadow 0.2s;
+  }
+  .ticket-card:hover {
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  }
+  .progress-sm {
+    height: 8px;
+  }
+  @media (max-width: 768px) {
+    .table { font-size: 0.8rem; }
+    .btn-sm { padding: 0.2rem 0.4rem; font-size: 0.7rem; }
+  }
+</style>
+
+<div class="ai-review-panel">
+  <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+    <h2 class="mb-0">🤖 AI Review Management</h2>
+    <div class="btn-group">
+      <button type="button" class="btn btn-outline-secondary" onclick="toggleSelectAll()">Select All</button>
+      <button type="button" class="btn btn-outline-danger" onclick="bulkReset(false)">Reset Jobs</button>
+      <button type="button" class="btn btn-danger" onclick="bulkReset(true)">Reset All (incl. Reviews)</button>
+    </div>
+  </div>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+        <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+          {{ message }}
+          <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+
+  <form id="bulkForm" method="post" action="{{ url_for('admin.bulk_reset_ai_review') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="ids" id="selectedIds">
+    <input type="hidden" name="delete_reviews" id="deleteReviews" value="0">
+
+    <div class="mb-3 p-3 bg-light rounded">
+      <div class="form-check">
+        <input class="form-check-input" type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll()">
+        <label class="form-check-label fw-bold" for="selectAllCheckbox">
+          Select All Tickets ({{ ticket_stats|length }})
+        </label>
+      </div>
+      <small class="text-muted">
+        Select tickets and click "Reset" to clear AI review state.
+        "Reset All" will also delete AI-generated review comments.
+      </small>
+    </div>
+
+    {% if ticket_stats|length == 0 %}
+      <div class="alert alert-info">
+        No tickets with AI review activity found.
+      </div>
+    {% else %}
+      <div class="table-responsive">
+        <table class="table table-hover">
+          <thead class="table-light">
+            <tr>
+              <th style="width: 40px;"></th>
+              <th>#</th>
+              <th>Title</th>
+              <th>Status</th>
+              <th>Jobs</th>
+              <th>AI Reviews</th>
+              <th>Latest Progress</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for stat in ticket_stats %}
+            <tr class="ticket-card">
+              <td>
+                <input type="checkbox" name="ticket_{{ stat.ticket.id }}" 
+                       value="{{ stat.ticket.id }}" class="ticket-checkbox form-check-input">
+              </td>
+              <td>{{ stat.ticket.id }}</td>
+              <td>
+                <a href="{{ url_for('tickets.detail', ticket_id=stat.ticket.id) }}">
+                  {{ stat.ticket.title[:60] }}{% if stat.ticket.title|length > 60 %}...{% endif %}
+                </a>
+                <br>
+                <small class="text-muted">
+                  Owner: {{ stat.ticket.owner.username }}
+                  {% if stat.ticket.pdf_filename %}
+                    📄
+                  {% endif %}
+                </small>
+              </td>
+              <td>
+                <span class="badge bg-{{ 
+                  'success' if stat.ticket.status == 'open' else 
+                  'warning' if stat.ticket.status == 'in_review' else 
+                  'secondary' }}">
+                  {{ stat.ticket.status_label }}
+                </span>
+              </td>
+              <td>{{ stat.job_count }}</td>
+              <td>{{ stat.ai_review_count }}</td>
+              <td style="min-width: 150px;">
+                {% if stat.status == 'none' %}
+                  <span class="text-muted">No activity</span>
+                {% elif stat.status == 'completed' %}
+                  <span class="badge bg-success">Completed</span>
+                  <div class="progress progress-sm mt-1">
+                    <div class="progress-bar bg-success" style="width: 100%"></div>
+                  </div>
+                {% elif stat.status == 'failed' %}
+                  <span class="badge bg-danger">Failed</span>
+                {% elif stat.status == 'partial' %}
+                  <span class="badge bg-warning">Partial</span>
+                  <div class="progress progress-sm mt-1">
+                    <div class="progress-bar bg-warning" style="width: {{ stat.progress }}%"></div>
+                  </div>
+                {% elif stat.status == 'processing' %}
+                  <span class="badge bg-primary">Processing</span>
+                  <div class="progress progress-sm mt-1">
+                    <div class="progress-bar bg-primary" style="width: {{ stat.progress }}%"></div>
+                  </div>
+                {% elif stat.status == 'queued' %}
+                  <span class="badge bg-secondary">Queued</span>
+                {% else %}
+                  <span class="badge bg-info">{{ stat.status }}</span>
+                {% endif %}
+              </td>
+              <td>
+                <div class="btn-group btn-group-sm">
+                  <a href="{{ url_for('tickets.detail', ticket_id=stat.ticket.id) }}" 
+                     class="btn btn-outline-primary" title="View Ticket">👁️</a>
+                  <button type="button" class="btn btn-outline-warning" 
+                          onclick="resetSingle({{ stat.ticket.id }}, false)" title="Reset Jobs">
+                    🔄 Jobs
+                  </button>
+                  <button type="button" class="btn btn-outline-danger" 
+                          onclick="resetSingle({{ stat.ticket.id }}, true)" title="Reset All">
+                    🗑️ All
+                  </button>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  </form>
+</div>
+
+<script>
+function toggleSelectAll() {
+  const checked = document.getElementById('selectAllCheckbox').checked;
+  document.querySelectorAll('.ticket-checkbox').forEach(cb => {
+    cb.checked = checked;
+  });
+}
+
+function getSelectedIds() {
+  const ids = [];
+  document.querySelectorAll('.ticket-checkbox:checked').forEach(cb => {
+    ids.push(cb.value);
+  });
+  return ids;
+}
+
+function bulkReset(deleteReviews) {
+  const ids = getSelectedIds();
+  if (ids.length === 0) {
+    alert('Please select at least one ticket.');
+    return;
+  }
+  
+  const msg = deleteReviews 
+    ? `This will reset ${ids.length} ticket(s) and DELETE all AI-generated reviews.\n\nThis cannot be undone!`
+    : `This will reset ${ids.length} ticket(s) (jobs only, keeping reviews).\n\nContinue?`;
+  
+  if (!confirm(msg)) return;
+  
+  document.getElementById('selectedIds').value = ids.join(',');
+  document.getElementById('deleteReviews').value = deleteReviews ? '1' : '0';
+  document.getElementById('bulkForm').submit();
+}
+
+function resetSingle(ticketId, deleteReviews) {
+  const msg = deleteReviews
+    ? `This will reset ticket #${ticketId} and DELETE all AI-generated reviews.\n\nThis cannot be undone!`
+    : `This will reset ticket #${ticketId} (jobs only, keeping reviews).\n\nContinue?`;
+  
+  if (!confirm(msg)) return;
+  
+  // Submit single ticket reset via API
+  const formData = new FormData();
+  formData.append('csrf_token', '{{ csrf_token() }}');
+  formData.append('delete_reviews', deleteReviews ? '1' : '0');
+  
+  fetch(`/admin/ai-review/bulk-reset?ids=${ticketId}`, {
+    method: 'POST',
+    headers: {
+      'X-CSRFToken': '{{ csrf_token() }}',
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: `csrf_token={{ csrf_token() }}&delete_reviews=${deleteReviews ? '1' : '0'}&ids=${ticketId}`
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.errors && data.errors.length > 0) {
+      alert('Error: ' + data.errors[0].error);
+    } else {
+      const msg = deleteReviews
+        ? `Reset complete!\nDeleted: ${data.total_deleted_jobs} jobs, ${data.total_deleted_sections} sections, ${data.total_deleted_reviews} reviews`
+        : `Reset complete!\nDeleted: ${data.total_deleted_jobs} jobs, ${data.total_deleted_sections} sections`;
+      alert(msg);
+      location.reload();
+    }
+  })
+  .catch(err => {
+    alert('Error: ' + err);
+  });
+}
+</script>
+{% endblock %}
