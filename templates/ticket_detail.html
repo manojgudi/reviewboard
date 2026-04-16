@@ -43,6 +43,20 @@
       display: flex;
       flex-direction: column;
     }
+
+    /* Dark mode: invert PDF viewer for readability */
+    .theme-dark .pdf-section {
+      background: #1a1a1a !important;
+    }
+    .theme-dark .pdf-section canvas,
+    .theme-dark #pdf-container canvas {
+      filter: invert(1) hue-rotate(180deg) !important;
+    }
+    .theme-dark .pdf-header {
+      background: #2d2d2d !important;
+      border-bottom-color: #404040 !important;
+      color: #e0e0e0 !important;
+    }
     
     .pdf-header {
       padding: 0.75rem 1rem;
