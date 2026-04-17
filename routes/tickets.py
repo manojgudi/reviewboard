@@ -377,7 +377,25 @@ def detail(ticket_id):
         page = 1
     elif page > 999:  # Sanity check to prevent abuse
         page = 999
-    return render_template('ticket_detail.html', ticket=ticket, Review=Review, initial_page=page, default_review_color=current_user.default_review_color)
+
+    # Get all reviews for this ticket to pass to template for highlighting
+    from models import Review
+    reviews = Review.query.filter_by(ticket_id=ticket_id).all()
+    reviews_json = [
+        {
+            'id': r.id,
+            'body': r.body,
+            'pdf_page': r.pdf_page,
+            'highlight_x': r.highlight_x,
+            'highlight_y': r.highlight_y,
+            'highlight_width': r.highlight_width,
+            'highlight_height': r.highlight_height,
+            'highlight_color': r.highlight_color,
+        }
+        for r in reviews if r.pdf_page is not None
+    ]
+
+    return render_template('ticket_detail.html', ticket=ticket, Review=Review, initial_page=page, current_page=page, default_review_color=current_user.default_review_color, reviews_json=reviews_json)
 
 
 @tickets_bp.route('/<int:ticket_id>/edit', methods=['GET', 'POST'])

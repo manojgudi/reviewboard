@@ -11,9 +11,9 @@
       gap: 1rem;
       height: calc(100vh - var(--navbar-height) - 2rem);
     }
-    
-    /* Mobile: stack vertically */
-    @media (max-width: 768px) {
+
+    /* Mobile and tablet: stack vertically */
+    @media (max-width: 1024px) {
       .viewer-container {
         grid-template-columns: 1fr;
         height: auto;
@@ -22,11 +22,15 @@
       .pdf-section {
         height: 50vh;
         min-height: 300px;
+        overflow: auto;
       }
       .review-section {
         height: auto;
         max-height: none;
         overflow-y: visible;
+      }
+      .review-section.hidden-comments {
+        display: none !important;
       }
       .review-section .review-pane {
         position: static !important;
@@ -34,7 +38,12 @@
         overflow-y: visible !important;
       }
     }
-    
+
+    /* Desktop: toggle comments visibility */
+    .review-section.hidden-comments {
+      display: none !important;
+    }
+
     .pdf-section {
       background: #fff;
       border-radius: 8px;
@@ -101,7 +110,22 @@
     }
     
     .text-layer ::selection {
-      background: rgba(0, 20, 80, 0.7) !important;
+          background: rgba(0, 20, 80, 0.7) !important;
+        }
+
+        /* Dark mode: selection color */
+        .theme-dark .text-layer ::selection {
+          background: rgba(255, 180, 0, 0.85) !important;
+        }
+
+        /* Permanent highlight marks */
+        .highlight-mark {
+      mix-blend-mode: multiply;
+      border-radius: 2px;
+      /* Background color set dynamically via JS with transparency */
+    }
+    .theme-dark .highlight-mark {
+      mix-blend-mode: screen;
     }
     
     /* Selection mode cursor */
@@ -171,25 +195,39 @@
       width: 500px;
       max-width: 90vw;
     }
-    
+
     .selection-popup h4 {
       margin-bottom: 1rem;
     }
-    
+
     .selection-popup .btn-toolbar {
       margin-bottom: 0.5rem;
     }
-    
+
     .selection-popup textarea {
       width: 100%;
       min-height: 120px;
       margin-bottom: 1rem;
     }
-    
+
     .selection-popup .btn-group {
       display: flex;
       gap: 0.5rem;
       justify-content: flex-end;
+    }
+
+    /* Dark mode: selection popup */
+    .theme-dark .selection-popup {
+      background: #2d2d2d;
+      color: #e0e0e0;
+    }
+    .theme-dark .selection-popup h4 {
+      color: #e0e0e0;
+    }
+    .theme-dark .selection-popup textarea {
+      background: #1a1a1a;
+      color: #e0e0e0;
+      border-color: #404040;
     }
     
     .overlay-backdrop {
@@ -411,6 +449,7 @@
         
       </div>
       <div class="d-flex gap-2 align-items-center flex-wrap">
+        <button id="toggle-comments-btn" class="btn btn-sm btn-secondary" onclick="toggleComments()">💬 Comments</button>
         {% if (ticket.owner_id == current_user.id or current_user.is_admin) %}
         <a href="{{ url_for('tickets.edit_ticket', ticket_id=ticket.id) }}" class="btn btn-outline-primary btn-sm">✏️ Edit</a>
         <form method="post" action="{{ url_for('tickets.delete_ticket', ticket_id=ticket.id) }}" id="delete-form-open" style="display:inline;">
@@ -475,6 +514,10 @@
             ✏️ Click-to-Annotate: ON
           </button>
         </div>
+        <button id="zoom-out" class="btn btn-sm btn-secondary" title="Zoom Out">➖</button>
+        <span id="zoom-level" style="min-width:50px;text-align:center;font-weight:bold;">150%</span>
+        <button id="zoom-in" class="btn btn-sm btn-secondary" title="Zoom In">➕</button>
+        <span style="margin:0 5px;">|</span>
         <button id="prev-page" class="btn btn-sm btn-secondary">← Prev</button>
         <span id="page-info">
           <span id="page-num-display" class="page-num-link" onclick="enablePageInput()" title="Click to jump to page">1</span>
@@ -574,7 +617,7 @@
           {% if current_user.is_admin or current_user.id == review.author_id %}
           <div class="mt-2 d-flex gap-2">
             <a href="{{ url_for('reviews.edit_review', review_id=review.id) }}" class="btn btn-sm btn-secondary">Edit</a>
-            <form method="post" action="{{ url_for('reviews.delete_review', review_id=review.id) }}" style="display:inline;">
+            <form method="post" action="{{ url_for('reviews.delete_review', review_id=review.id) }}" style="display:inline;" onsubmit="this.action += '?page=' + currentPage;">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <button type="submit" class="btn btn-sm btn-danger">Delete</button>
             </form>
@@ -636,13 +679,18 @@
         <small class="text-muted">Click the button above to add a general comment without selecting text.</small>
       </div>
       
-      <form method="post" action="{{ url_for('reviews.add_review', ticket_id=ticket.id) }}" id="review-form">
+      <form method="post" id="review-form" onsubmit="return false;">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="pdf_page" id="pdf_page_input" value="">
         <input type="hidden" name="pdf_x" id="pdf_x_input" value="">
         <input type="hidden" name="pdf_y" id="pdf_y_input" value="">
         <input type="hidden" name="highlight_text" id="highlight_text_input" value="">
-        <input type="hidden" name="highlight_color" id="highlight_color_input" value="yellow">
+        <input type="hidden" name="highlight_color" id="highlight_color_input" value="{{ default_review_color }}">
+        <!-- New highlight position fields (normalized 0-1) -->
+        <input type="hidden" name="highlight_x" id="highlight_x_input" value="">
+        <input type="hidden" name="highlight_y" id="highlight_y_input" value="">
+        <input type="hidden" name="highlight_width" id="highlight_width_input" value="">
+        <input type="hidden" name="highlight_height" id="highlight_height_input" value="">
         
         <div id="selected-text-preview" class="alert alert-info" style="display:none;">
           <strong>📌 Selected on page <span id="selected-page-display"></span>:</strong>
@@ -689,7 +737,10 @@
   </div>
   
   <textarea id="selection-comment" placeholder="Enter your comment... (Markdown supported)"></textarea>
-  
+
+  <!-- Highlight color for selection popup - uses user's default -->
+  <input type="hidden" id="selection-highlight-color" value="{{ default_review_color }}">
+
   <!-- AI Simplify Error Modal -->
   <div class="overlay-backdrop" id="ai-error-backdrop" style="display:none; z-index:3000;"></div>
   <div class="selection-popup" id="ai-error-popup" style="display:none; z-index:3001; background:#fff3f3; border:2px solid #dc3545;">
@@ -704,7 +755,7 @@
     <small class="text-muted">Tip: Use **bold**, *italic*, `code`, etc.</small>
     <div class="btn-group">
       <button class="btn btn-secondary" onclick="closeSelectionPopup()">Cancel</button>
-      <button class="btn btn-primary" onclick="submitSelectionComment()">Submit</button>
+      <button type="button" class="btn btn-primary" onclick="submitSelectionComment()">Submit</button>
     </div>
   </div>
 </div>
@@ -723,10 +774,10 @@
   let currentPage = {{ initial_page | default(1) }};
   let totalPages = 1;
   let pdfDoc = null;
-  let currentScale = 1.5;
+  let currentScale = parseFloat(localStorage.getItem('pdfZoom') || '1.5');
   let pendingSelection = null;
   let selectionEnabled = true; // Track if click-to-annotate is enabled
-  
+
   // DOM Elements
   const pdfContainer = document.getElementById('pdf-container');
   const pageNumDisplay = document.getElementById('page-num-display');
@@ -736,8 +787,75 @@
   const toggleBtn = document.getElementById('toggle-selection');
   const manualAddSection = document.getElementById('manual-add-section');
   const mainTextarea = document.querySelector('textarea[name="body"]');
-  
+  const zoomInBtn = document.getElementById('zoom-in');
+  const zoomOutBtn = document.getElementById('zoom-out');
+  const zoomLevelSpan = document.getElementById('zoom-level');
+
+  // Save zoom level when it changes
+  function saveZoomLevel() {
+    localStorage.setItem('pdfZoom', currentScale.toString());
+  }
+
+  // Zoom functions
+  function updateZoomDisplay() {
+    zoomLevelSpan.textContent = Math.round(currentScale * 100) + '%';
+  }
+
+  function zoomIn() {
+    if (currentScale < 3.0) {
+      currentScale += 0.25;
+      renderPage(currentPage);
+      updateZoomDisplay();
+      saveZoomLevel();
+    }
+  }
+
+  function zoomOut() {
+    if (currentScale > 0.5) {
+      currentScale -= 0.25;
+      renderPage(currentPage);
+      updateZoomDisplay();
+      saveZoomLevel();
+    }
+  }
+
+  zoomInBtn.addEventListener('click', zoomIn);
+  zoomOutBtn.addEventListener('click', zoomOut);
+
   // Toggle selection mode
+  // Toggle comments visibility (works on all screen sizes)
+  function toggleComments() {
+    const reviewSection = document.querySelector('.review-section');
+    const pdfSection = document.querySelector('.pdf-section');
+    const viewerContainer = document.querySelector('.viewer-container');
+    const btn = document.getElementById('toggle-comments-btn');
+
+    // Always use class toggle, not media query
+    if (reviewSection.classList.contains('hidden-comments')) {
+      // Show comments, shrink PDF - restore desktop layout
+      reviewSection.classList.remove('hidden-comments');
+      btn.textContent = '💬 Comments';
+      btn.classList.remove('btn-primary');
+      btn.classList.add('btn-secondary');
+      // Restore desktop layout: PDF on left, comments on right
+      viewerContainer.style.gridTemplateColumns = '1fr 380px';
+      pdfSection.style.height = '';
+      pdfSection.style.minHeight = '';
+      pdfSection.style.width = '';
+    } else {
+      // Hide comments, expand PDF to full width - desktop layout
+      reviewSection.classList.add('hidden-comments');
+      btn.textContent = '📄 PDF';
+      btn.classList.remove('btn-secondary');
+      btn.classList.add('btn-primary');
+      // Force grid to single column - PDF takes full width
+      viewerContainer.style.gridTemplateColumns = '1fr';
+      pdfSection.style.height = 'calc(100vh - 150px)';
+      pdfSection.style.minHeight = '100vh';
+      pdfSection.style.width = '100%';
+    }
+  }
+
   function toggleSelectionMode() {
     selectionEnabled = !selectionEnabled;
     
@@ -991,7 +1109,10 @@
     try {
       const page = await pdfDoc.getPage(pageNum);
       const viewport = page.getViewport({ scale: currentScale });
-      
+
+      // Set scale factor CSS variable for correct text layer coordinates at zoom
+      pdfContainer.style.setProperty('--scale-factor', currentScale.toString());
+
       // Create canvas for rendering
       const canvas = document.createElement('canvas');
       canvas.width = viewport.width;
@@ -1025,15 +1146,106 @@
       
       // Add mouseup handler for text selection (only if enabled)
       textLayerDiv.addEventListener('mouseup', handleTextSelection);
-      
+
+      // Add touchend for mobile/tablet support (with delay to avoid double-trigger)
+      let touchTimeout = null;
+      textLayerDiv.addEventListener('touchend', (e) => {
+        // Delay to allow selection to complete on mobile
+        if (touchTimeout) clearTimeout(touchTimeout);
+        touchTimeout = setTimeout(() => {
+          handleTextSelection(e);
+        }, 200);
+      });
+
+      // NOTE: Do NOT use selectionchange on desktop - it interferes with normal mouse selection
+      // On mobile, touchend handles the initial selection, browser handles expansion
+
       // Update text layer state based on selection mode
       updateTextLayerState();
-      
+
+      // Render highlights for this page after text layer
+      renderHighlights(pageNum);
+
     } catch (e) {
       console.error('Error rendering page:', e);
     }
   }
-  
+
+  // Render permanent highlights on the text layer
+  function renderHighlights(pageNum) {
+    // Get all reviews for this ticket that have highlight data on this page
+    const highlights = {{ reviews_json | tojson }};
+
+    highlights.forEach((review, index) => {
+      if (review.pdf_page == pageNum && review.highlight_x !== null) {
+        // Create highlight overlay
+        const highlight = document.createElement('div');
+        highlight.className = 'highlight-mark';
+        highlight.style.position = 'absolute';
+        highlight.style.left = (review.highlight_x * 100) + '%';
+        highlight.style.top = (review.highlight_y * 100) + '%';
+        highlight.style.width = (review.highlight_width * 100) + '%';
+        highlight.style.height = (review.highlight_height * 100) + '%';
+
+        // Add transparency to user's chosen color (35% opacity)
+        highlight.style.backgroundColor = addTransparency(review.highlight_color, 0.35);
+
+        highlight.style.pointerEvents = 'none';
+        // Stagger z-index so overlapping highlights stack nicely (earlier = bottom)
+        highlight.style.zIndex = (10 + index).toString();
+        highlight.title = (review.body || '').substring(0, 50) + (review.body && review.body.length > 50 ? '...' : '');
+
+        pdfContainer.appendChild(highlight);
+      }
+    });
+  }
+
+  // Convert any color to rgba with transparency
+  function addTransparency(color, opacity) {
+    if (!color) return `rgba(255, 255, 0, ${opacity})`;
+
+    // If already rgba, just adjust opacity
+    if (color.startsWith('rgba')) {
+      return color.replace(/[\d.]+\)$/, `${opacity})`);
+    }
+
+    // If hex color, convert to rgba
+    if (color.startsWith('#')) {
+      let hex = color.slice(1);
+      if (hex.length === 3) {
+        hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+      }
+      const r = parseInt(hex.slice(0, 2), 16);
+      const g = parseInt(hex.slice(2, 4), 16);
+      const b = parseInt(hex.slice(4, 6), 16);
+      return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+    }
+
+    // If rgb, convert to rgba
+    if (color.startsWith('rgb(')) {
+      return color.replace('rgb(', 'rgba(').replace(')', `, ${opacity})`);
+    }
+
+    // Named colors - convert to rgba
+    const namedColors = {
+      'yellow': 'rgba(255, 255, 0, ' + opacity + ')',
+      'green': 'rgba(0, 128, 0, ' + opacity + ')',
+      'blue': 'rgba(0, 0, 255, ' + opacity + ')',
+      'pink': 'rgba(255, 192, 203, ' + opacity + ')',
+      'orange': 'rgba(255, 165, 0, ' + opacity + ')',
+      'red': 'rgba(255, 0, 0, ' + opacity + ')',
+      'purple': 'rgba(128, 0, 128, ' + opacity + ')',
+      'cyan': 'rgba(0, 255, 255, ' + opacity + ')',
+    };
+
+    if (namedColors[color.toLowerCase()]) {
+      return namedColors[color.toLowerCase()];
+    }
+
+    // Fallback: yellow with opacity
+    return `rgba(255, 255, 0, ${opacity})`;
+  }
+
   // Handle text selection
   function handleTextSelection(e) {
     // Only process if selection mode is enabled
@@ -1052,23 +1264,32 @@
     const rect = range.getBoundingClientRect();
     const containerRect = pdfContainer.getBoundingClientRect();
     
-    // Calculate relative position
-    const x = rect.left - containerRect.left;
-    const y = rect.top - containerRect.top;
-    
+    // Calculate relative position (normalized 0-1)
+    const relX = (rect.left - containerRect.left) / containerRect.width;
+    const relY = (rect.top - containerRect.top) / containerRect.height;
+    const relWidth = rect.width / containerRect.width;
+    const relHeight = rect.height / containerRect.height;
+
     // Store selection data
     pendingSelection = {
       text: selectedText,
-      x: Math.round(x),
-      y: Math.round(y),
+      x: Math.round(relX * 1000) / 1000,  // Normalize to 0-1
+      y: Math.round(relY * 1000) / 1000,
+      width: Math.round(relWidth * 1000) / 1000,
+      height: Math.round(relHeight * 1000) / 1000,
       page: currentPage
     };
-    
+
     // Update form
     document.getElementById('highlight_text_input').value = selectedText;
     document.getElementById('pdf_x_input').value = pendingSelection.x;
     document.getElementById('pdf_y_input').value = pendingSelection.y;
     document.getElementById('pdf_page_input').value = currentPage;
+    // New fields for highlight positioning
+    document.getElementById('highlight_x_input').value = pendingSelection.x;
+    document.getElementById('highlight_y_input').value = pendingSelection.y;
+    document.getElementById('highlight_width_input').value = pendingSelection.width;
+    document.getElementById('highlight_height_input').value = pendingSelection.height;
     
     // Show preview
     document.getElementById('selected-text-preview').style.display = 'block';
@@ -1092,13 +1313,16 @@
   }
   
   // Close selection popup
-  function closeSelectionPopup() {
+  function closeSelectionPopup(clearSelection = true) {
     document.getElementById('selection-backdrop').style.display = 'none';
     document.getElementById('selection-popup').style.display = 'none';
     pendingSelection = null;
-    
-    // Clear selection
-    window.getSelection().removeAllRanges();
+
+    // Only clear selection if explicitly requested (Cancel button)
+    if (clearSelection) {
+      window.getSelection().removeAllRanges();
+    }
+    // Otherwise keep the selection (highlight stays visible after submit)
   }
   
   // Submit selection comment via AJAX
@@ -1108,12 +1332,43 @@
       alert('Please enter a comment');
       return;
     }
-    
-    const csrfToken = document.querySelector('input[name="csrf_token"]').value;
+
+    // Get fresh CSRF token before submit
+    fetch('/reviews/csrf-token')
+      .then(r => {
+        if (!r.ok) {
+          // If not authenticated, reload page to show login
+          window.location.href = window.location.pathname + "?page=" + currentPage;
+          throw new Error('Not authenticated');
+        }
+        return r.json();
+      })
+      .then(data => {
+        const csrfToken = data.csrf_token;
+        return doSubmitComment(csrfToken, comment);
+      })
+      .catch(err => {
+        console.error('Error getting CSRF token:', err);
+        alert('Failed to submit. Please refresh the page.');
+      });
+  }
+
+  function doSubmitComment(csrfToken, comment) {
     const highlightColor = document.getElementById('highlight-color').value;
     const ticketId = {{ ticket.id }};
-    
-    closeSelectionPopup();
+
+    // Save selection before closing popup (mobile needs this)
+    const savedSelection = window.getSelection();
+    const savedRange = savedSelection.rangeCount > 0 ? savedSelection.getRangeAt(0).cloneRange() : null;
+    const selectionText = savedSelection.toString();
+
+    closeSelectionPopup(false);  // false = don't clear selection, keep highlight visible
+
+    // Restore selection for annotation highlighting (if needed)
+    if (savedRange) {
+      savedSelection.removeAllRanges();
+      savedSelection.addRange(savedRange);
+    }
     
     // Disable submit button to prevent double submit
     const submitBtn = document.querySelector('#review-form button[type="submit"]');
@@ -1136,16 +1391,27 @@
         'pdf_x': document.getElementById('pdf_x_input').value || '',
         'pdf_y': document.getElementById('pdf_y_input').value || '',
         'highlight_text': document.getElementById('highlight_text_input').value || '',
-        'highlight_color': highlightColor
+        'highlight_color': highlightColor,
+        // New highlight position fields (normalized 0-1)
+        'highlight_x': document.getElementById('highlight_x_input').value || '',
+        'highlight_y': document.getElementById('highlight_y_input').value || '',
+        'highlight_width': document.getElementById('highlight_width_input').value || '',
+        'highlight_height': document.getElementById('highlight_height_input').value || '',
       })
     })
-    .then(response => response.json())
+    .then(response => {
+      console.log('Response status:', response.status);
+      return response.json().catch(() => ({error: 'Invalid JSON response'}));
+    })
     .then(data => {
+      console.log('Response data:', data);
       if (data.success) {
-        // Refresh the page to show the new review
-        window.location.href = data.redirect || window.location.href;
+        // Refresh the page to show the new review and reload annotations
+        renderPage(currentPage);
+        // Reload the page to show new comment
+        window.location.href = window.location.pathname + "?page=" + currentPage;
       } else {
-        alert(data.error || 'Failed to add review');
+        alert(data.error || 'Failed to add review: ' + (data.error || 'Unknown error'));
         if (submitBtn) {
           submitBtn.disabled = false;
           submitBtn.textContent = 'Submit Review';
@@ -1154,7 +1420,7 @@
     })
     .catch(error => {
       console.error('Error submitting review:', error);
-      alert('Failed to submit review. Please try again.');
+      alert('Failed to submit review. Please try again. Check console for details.');
       if (submitBtn) {
         submitBtn.disabled = false;
         submitBtn.textContent = 'Submit Review';
@@ -1165,40 +1431,70 @@
   // Handle main form submission via AJAX
   document.getElementById('review-form').addEventListener('submit', function(e) {
     e.preventDefault();
-    
+
     const form = this;
     const submitBtn = form.querySelector('button[type="submit"]');
     const originalText = submitBtn.textContent;
-    
+
     // Disable button
     submitBtn.disabled = true;
     submitBtn.textContent = 'Submitting...';
-    
-    const formData = new FormData(form);
-    formData.set('highlight_color', document.getElementById('highlight-color').value);
-    
-    fetch(form.action, {
-      method: 'POST',
-      headers: {
-        'X-Requested-With': 'XMLHttpRequest'
-      },
-      body: formData
-    })
-    .then(response => response.json())
-    .then(data => {
-      if (data.success) {
-        window.location.href = data.redirect || window.location.href;
-      } else {
-        alert(data.error || 'Failed to add review');
+
+    // Get CSRF token first
+    fetch('/reviews/csrf-token')
+      .then(r => {
+        if (!r.ok) {
+          window.location.href = window.location.pathname + "?page=" + currentPage;
+          throw new Error('Not authenticated');
+        }
+        return r.json();
+      })
+      .then(tokenData => {
+        const formData = new FormData();
+        formData.set('csrf_token', tokenData.csrf_token);
+        formData.set('body', document.getElementById('review-body').value);
+        formData.set('pdf_page', document.getElementById('pdf_page_input')?.value || '');
+        formData.set('pdf_x', document.getElementById('pdf_x_input')?.value || '');
+        formData.set('pdf_y', document.getElementById('pdf_y_input')?.value || '');
+        formData.set('highlight_text', document.getElementById('highlight_text_input')?.value || '');
+        formData.set('highlight_color', document.getElementById('highlight-color').value);
+        // Override with selection popup color if available
+        const selColor = document.getElementById('selection-highlight-color');
+        if (selColor) formData.set('highlight_color', selColor.value);
+        // New highlight position fields (normalized 0-1)
+        formData.set('highlight_x', document.getElementById('highlight_x_input')?.value || '');
+        formData.set('highlight_y', document.getElementById('highlight_y_input')?.value || '');
+        formData.set('highlight_width', document.getElementById('highlight_width_input')?.value || '');
+        formData.set('highlight_height', document.getElementById('highlight_height_input')?.value || '');
+
+        const ticketId = {{ ticket.id }};
+
+        return fetch(`/reviews/${ticketId}/add`, {
+          method: 'POST',
+          headers: {
+            'X-Requested-With': 'XMLHttpRequest'
+          },
+          body: formData
+        });
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          renderPage(currentPage);
+          window.location.href = window.location.pathname + "?page=" + currentPage;
+          document.getElementById('review-body').value = '';
+        } else {
+          alert(data.error || 'Failed to add review');
+        }
         submitBtn.disabled = false;
         submitBtn.textContent = originalText;
-      }
-    })
-    .catch(error => {
-      console.error('Error submitting review:', error);
-      // Fallback to normal form submission if AJAX fails
-      form.submit();
-    });
+      })
+      .catch(error => {
+        console.error('Error submitting review:', error);
+        alert('Failed to add review. Please try again.');
+        submitBtn.disabled = false;
+        submitBtn.textContent = originalText;
+      });
   });
   
   // Page jump functionality

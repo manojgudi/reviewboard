@@ -61,6 +61,11 @@ def add_review(ticket_id):
         pdf_y=request.form.get('pdf_y') or None,
         highlight_text=request.form.get('highlight_text') or None,
         highlight_color=request.form.get('highlight_color') or 'yellow',
+        # New highlight position fields (normalized 0-1)
+        highlight_x=request.form.get('highlight_x') or None,
+        highlight_y=request.form.get('highlight_y') or None,
+        highlight_width=request.form.get('highlight_width') or None,
+        highlight_height=request.form.get('highlight_height') or None,
     )
     db.session.add(review)
     
@@ -115,10 +120,12 @@ def delete_review(review_id):
     if not (current_user.is_admin or review.author_id == current_user.id):
         abort(403)
     ticket_id = review.ticket_id
+    # Preserve the page parameter if provided
+    page = request.args.get('page', 1, type=int)
     db.session.delete(review)
     db.session.commit()
     flash('Review deleted', 'info')
-    return redirect(url_for('tickets.detail', ticket_id=ticket_id))
+    return redirect(url_for('tickets.detail', ticket_id=ticket_id, page=page))
 
 
 
@@ -163,7 +170,7 @@ def api_simplify_text():
         response = requests.post(
             ai_endpoint,
             json={
-                'model': 'gpt-oss:20b',
+                'model': 'gemma4:26b',
                 'messages': [
                     {
                         'role': 'system',
