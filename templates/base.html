@@ -347,6 +347,27 @@
       opacity: 0.7;
     }
 
+    /* Fix all form inputs and textareas in dark mode */
+    .theme-dark input[type="text"],
+    .theme-dark input[type="number"],
+    .theme-dark input[type="email"],
+    .theme-dark input[type="password"],
+    .theme-dark textarea {
+      background-color: #1a1a1a !important;
+      color: #e0e0e0 !important;
+      border-color: #404040 !important;
+    }
+    .theme-dark input[type="text"]:focus,
+    .theme-dark input[type="number"]:focus,
+    .theme-dark input[type="email"]:focus,
+    .theme-dark input[type="password"]:focus,
+    .theme-dark textarea:focus {
+      background-color: #2d2d2d !important;
+      color: #ffffff !important;
+      border-color: #666 !important;
+      outline: none;
+    }
+
     /* Fix table colors in dark mode if tables exist */
     .theme-dark table {
       color: var(--color-text-primary);
