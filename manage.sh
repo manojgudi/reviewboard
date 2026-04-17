@@ -21,6 +21,13 @@ NC='\033[0m' # No Color
 # Ensure log directory exists
 mkdir -p "$LOG_DIR"
 
+# Source environment variables
+if [ -f "$APP_DIR/.env" ]; then
+    set -a
+    source "$APP_DIR/.env"
+    set +a
+fi
+
 # Source virtual environment
 if [ -f "$APP_DIR/.venv/bin/activate" ]; then
     source "$APP_DIR/.venv/bin/activate"

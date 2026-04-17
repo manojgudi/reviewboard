@@ -7,8 +7,7 @@ Run with:
 import os
 import re
 import logging
-from datetime import timedelta
-from io import BytesIO
+from datetime import timezone as dt_tz
 from logging.handlers import RotatingFileHandler
 
 from markupsafe import Markup
@@ -76,6 +75,7 @@ def create_app(test_config=None):
         UPLOAD_FOLDER=os.path.join(app.root_path, "static", "uploads"),
         MAX_CONTENT_LENGTH=20 * 1024 * 1024,  # 20 MiB max upload
         WTF_CSRF_TIME_LIMIT=3600,              # 1 hour CSRF token lifetime
+        WTF_CSRF_ENABLED=True,                 # Enable CSRF protection
     )
 
     # ⚠️ Validate Ollama endpoint configuration
@@ -196,7 +196,8 @@ def create_app(test_config=None):
         # Content Security Policy - restrict sources
         response.headers['Content-Security-Policy'] = (
             "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; "
+            "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net blob:; "
+            "worker-src 'self' blob:; "
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; "
             "font-src 'self' https://fonts.gstatic.com; "
             "img-src 'self' data: blob:; "
