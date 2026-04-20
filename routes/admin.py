@@ -628,7 +628,9 @@ def online_users():
         else:
             if user.last_seen:
                 minutes_ago = int((now - last_seen).total_seconds() / 60)
-                if minutes_ago >= 60:
+                if minutes_ago >= 1440:  # 24+ hours → show days
+                    user_info['minutes_ago'] = f"{minutes_ago // 1440}d ago"
+                elif minutes_ago >= 60:  # 60+ minutes → show hours
                     user_info['minutes_ago'] = f"{minutes_ago // 60}h ago"
                 else:
                     user_info['minutes_ago'] = f"{minutes_ago}m ago"

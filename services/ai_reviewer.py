@@ -32,17 +32,6 @@ OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "300"))  # seconds (5 minutes)
 OLLAMA_MAX_RETRIES = int(os.getenv("OLLAMA_MAX_RETRIES", "3"))
 OLLAMA_MAX_CONCURRENT = int(os.getenv("OLLAMA_MAX_CONCURRENT", "10"))  # Max concurrent requests
 
-# Sections to skip - these are trivial or cause false positives
-SKIP_SECTIONS = [
-    'references',
-    'acknowledgments',
-    'acknowledgements',
-    'bibliography',
-    'appendix',
-    'supplementary materials',
-    'supplementary information',
-]
-
 # Review prompt template - MUST give specific, line-referenced feedback
 REVIEW_PROMPT_TEMPLATE = """You are a CRITICAL peer reviewer. Your feedback MUST be SPECIFIC and ACTIONABLE.
 

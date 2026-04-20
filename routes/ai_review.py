@@ -28,7 +28,7 @@ def get_ollama_config():
     """
     return {
         'endpoint': os.getenv('OLLAMA_ENDPOINT', 'http://10.51.5.169:11434/v1/chat/completions'),
-        'model': os.getenv('OLLAMA_MODEL', 'gpt-oss:20b'),
+        'model': os.getenv('OLLAMA_MODEL', 'gemma4:26b'),
         'timeout': int(os.getenv('OLLAMA_TIMEOUT', '120')),
         'max_retries': int(os.getenv('OLLAMA_MAX_RETRIES', '3')),
         'max_concurrent': int(os.getenv('OLLAMA_MAX_CONCURRENT', '10')),

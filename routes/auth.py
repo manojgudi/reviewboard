@@ -44,23 +44,6 @@ class LoginForm(FlaskForm):
     submit = SubmitField("Log In")
 
 
-class RegisterForm(FlaskForm):
-    username = StringField("Username", validators=[DataRequired(), Length(3, 80)])
-    email = StringField("Email", validators=[DataRequired(), Email()])
-    full_name = StringField("Full Name", validators=[Length(max=200)])
-    password = PasswordField("Password", validators=[DataRequired(), Length(min=6)])
-    confirm = PasswordField("Confirm", validators=[DataRequired(), EqualTo("password")])
-    submit = SubmitField("Register")
-
-    def validate_username(self, field):
-        if User.query.filter_by(username=field.data).first():
-            raise ValidationError("Username already taken")
-
-    def validate_email(self, field):
-        if User.query.filter_by(email=field.data).first():
-            raise ValidationError("Email already registered")
-
-
 # ── Helpers ────────────────────────────────────────────────────────────
 def _get_bcrypt():
     """Import bcrypt from app module to avoid circular imports."""

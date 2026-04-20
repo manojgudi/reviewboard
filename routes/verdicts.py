@@ -7,8 +7,6 @@ from models import db, Verdict, Ticket, VERDICT_CHOICES
 
 verdicts_bp = Blueprint('verdicts', __name__)
 
-VALID_VERDICTS = [choice[0] for choice in VERDICT_CHOICES]
-
 
 @verdicts_bp.route('/api/tickets/<int:ticket_id>/verdict', methods=['GET'])
 @login_required
