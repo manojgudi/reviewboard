@@ -122,12 +122,40 @@
         .highlight-mark {
       mix-blend-mode: multiply;
       border-radius: 2px;
+      pointer-events: auto;  /* Allow hover events */
+      cursor: pointer;
       /* Background color set dynamically via JS with transparency */
     }
     .theme-dark .highlight-mark {
       mix-blend-mode: screen;
     }
-    
+
+    /* Highlight tooltip */
+    .highlight-tooltip {
+      position: fixed;
+      background: var(--bg-secondary, #f8f9fa);
+      border: 1px solid var(--border-color, #dee2e6);
+      border-radius: 8px;
+      padding: 12px 16px;
+      max-width: 400px;
+      max-height: 300px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      z-index: 10000;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      font-size: 14px;
+      line-height: 1.5;
+      display: none;
+      pointer-events: none;  /* Don't block mouse events */
+    }
+    .theme-dark .highlight-tooltip {
+      background: var(--bg-secondary, #2d2d2d);
+      border-color: #404040;
+      color: var(--text-color, #e0e0e0);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    }
+
     /* Selection mode cursor */
     .text-layer.selection-enabled {
       cursor: text;
@@ -617,8 +645,7 @@
           {% if current_user.is_admin or current_user.id == review.author_id %}
           <div class="mt-2 d-flex gap-2">
             <a href="{{ url_for('reviews.edit_review', review_id=review.id) }}" class="btn btn-sm btn-secondary">Edit</a>
-            <form method="post" action="{{ url_for('reviews.delete_review', review_id=review.id) }}" style="display:inline;" onsubmit="this.action += '?page=' + currentPage;">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <form method="post" style="display:inline;" onsubmit="deleteReview(event, {{ review.id }}); return false;">
               <button type="submit" class="btn btn-sm btn-danger">Delete</button>
             </form>
           </div>
@@ -1176,6 +1203,15 @@
     // Get all reviews for this ticket that have highlight data on this page
     const highlights = {{ reviews_json | tojson }};
 
+    // Create tooltip element if not exists
+    let tooltip = document.getElementById('highlight-tooltip');
+    if (!tooltip) {
+      tooltip = document.createElement('div');
+      tooltip.id = 'highlight-tooltip';
+      tooltip.className = 'highlight-tooltip';
+      document.body.appendChild(tooltip);
+    }
+
     highlights.forEach((review, index) => {
       if (review.pdf_page == pageNum && review.highlight_x !== null) {
         // Create highlight overlay
@@ -1190,14 +1226,50 @@
         // Add transparency to user's chosen color (35% opacity)
         highlight.style.backgroundColor = addTransparency(review.highlight_color, 0.35);
 
-        highlight.style.pointerEvents = 'none';
-        // Stagger z-index so overlapping highlights stack nicely (earlier = bottom)
-        highlight.style.zIndex = (10 + index).toString();
-        highlight.title = (review.body || '').substring(0, 50) + (review.body && review.body.length > 50 ? '...' : '');
+        highlight.style.pointerEvents = 'auto';
+        highlight.style.cursor = 'pointer';
+
+        // Store review data for tooltip
+        highlight.dataset.reviewId = review.id;
+        highlight.dataset.body = review.body || '';
+
+        // Add hover events for tooltip
+        highlight.addEventListener('mouseenter', (e) => {
+          tooltip.textContent = review.body || '(No comment)';
+          tooltip.style.display = 'block';
+          positionTooltip(e, tooltip);
+        });
+
+        highlight.addEventListener('mousemove', (e) => {
+          positionTooltip(e, tooltip);
+        });
+
+        highlight.addEventListener('mouseleave', () => {
+          tooltip.style.display = 'none';
+        });
 
         pdfContainer.appendChild(highlight);
       }
     });
+  }
+
+  // Position tooltip near cursor
+  function positionTooltip(event, tooltip) {
+    const offset = 15;
+    let x = event.clientX + offset;
+    let y = event.clientY + offset;
+
+    // Keep tooltip within viewport
+    const rect = tooltip.getBoundingClientRect();
+    if (x + rect.width > window.innerWidth) {
+      x = event.clientX - rect.width - offset;
+    }
+    if (y + rect.height > window.innerHeight) {
+      y = event.clientY - rect.height - offset;
+    }
+
+    tooltip.style.left = x + 'px';
+    tooltip.style.top = y + 'px';
   }
 
   // Convert any color to rgba with transparency
@@ -1350,6 +1422,39 @@
       .catch(err => {
         console.error('Error getting CSRF token:', err);
         alert('Failed to submit. Please refresh the page.');
+      });
+  }
+
+  // Delete review with fresh CSRF token
+  function deleteReview(event, reviewId) {
+    event.preventDefault();
+
+    fetch('/reviews/csrf-token')
+      .then(r => r.json())
+      .then(data => {
+        const csrfToken = data.csrf_token;
+        const page = currentPage;
+
+        return fetch(`/reviews/delete/${reviewId}?page=${page}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'X-Requested-With': 'XMLHttpRequest'
+          },
+          body: `csrf_token=${encodeURIComponent(csrfToken)}`
+        });
+      })
+      .then(r => r.json())
+      .then(data => {
+        if (data.success) {
+          window.location.href = window.location.pathname + '?page=' + currentPage;
+        } else {
+          alert(data.error || 'Failed to delete review');
+        }
+      })
+      .catch(err => {
+        console.error('Error deleting review:', err);
+        alert('Failed to delete review. Please try again.');
       });
   }
 
